@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from . import alerts as alerts_mod
 from .boards import (board_columns, board_dict, column_counts, column_dict, duplicate_board, incident_levels,
                      layout, load_incidents, place)
-from .db import (AiResult, Alert, AlertMembership, Board, Column, Incident, IncidentEvent, Link, LinkRule,
+from .db import (utcnow, AiResult, Alert, AlertMembership, Board, Column, Incident, IncidentEvent, Link, LinkRule,
                  RulePreset, SessionLocal, Snapshot, get_session, get_setting, init_db, set_setting)
 from .fields import build_context, field_value, parse_dt, registry
 from .ingest import IngestError, ingest
@@ -201,6 +201,7 @@ class BoardBody(BaseModel):
     mode: str | None = None
     view: str | None = None
     hideDisappeared: bool | None = None
+    wallLayout: dict | None = None
     position: int | None = None
     columnOrder: list[int] | None = None
 
@@ -258,6 +259,8 @@ def patch_board(board_id: int, body: BoardBody, s: Session = DB):
         b.view = body.view
     if body.hideDisappeared is not None:
         b.hide_disappeared = body.hideDisappeared
+    if "wallLayout" in body.model_fields_set:
+        b.wall_layout = _clean_wall_layout(body.wallLayout)
     if body.position is not None:
         b.position = body.position
     if body.columnOrder:
@@ -270,6 +273,31 @@ def patch_board(board_id: int, body: BoardBody, s: Session = DB):
         alerts_mod.baseline(s, board_ids=[b.id])  # раскладка поменялась не из-за новых данных
     s.commit()
     return board_dict(b, board_columns(s, b.id))
+
+
+def _clean_wall_layout(raw: dict | None) -> dict | None:
+    """Раскладка экрана на стене: только известные ключи и разумные пределы."""
+    if raw is None:
+        return None
+
+    def num(v, lo, hi, default):
+        try:
+            return max(lo, min(hi, float(v)))
+        except (TypeError, ValueError):
+            return default
+
+    tiles = {}
+    for cid, t in (raw.get("tiles") or {}).items():
+        if not isinstance(t, dict):
+            continue
+        tiles[str(cid)] = {
+            "x": int(num(t.get("x"), 0, 11, 0)), "y": int(num(t.get("y"), 0, 199, 0)),
+            "w": int(num(t.get("w"), 1, 12, 4)), "h": int(num(t.get("h"), 1, 40, 4)),
+            "hidden": bool(t.get("hidden", False)), "showCards": bool(t.get("showCards", False)),
+            "maxCards": int(num(t.get("maxCards"), 1, 30, 6)),
+        }
+    return {"scale": round(num(raw.get("scale"), 0.6, 2.0, 1.0), 2), "showClock": bool(raw.get("showClock", True)),
+            "showTitle": bool(raw.get("showTitle", True)), "tiles": tiles}
 
 
 @app.delete("/api/boards/{board_id}")
@@ -464,10 +492,92 @@ def list_presets(with_counts: bool = True, s: Session = DB):
             warn = f"Нет данных: в загруженных файлах нет поля {', '.join(missing)}"
         elif unavailable:
             warn = f"Нет данных: недоступно — {', '.join(unavailable)}"
-        out.append({"id": p.id, "name": p.name, "origin": p.origin, "description": p.description, "rule": p.rule,
-                    "level": p.level, "alert": p.alert, "repeatMin": p.repeat_min, "stage": p.stage,
-                    "count": count, "noData": no_data, "warning": warn})
+        out.append(_preset_dict(p) | {"count": count, "noData": no_data, "warning": warn})
     return out
+
+
+def _preset_dict(p: RulePreset) -> dict:
+    return {"id": p.id, "name": p.name, "origin": p.origin, "description": p.description, "rule": p.rule,
+            "level": p.level, "alert": p.alert, "repeatMin": p.repeat_min, "stage": p.stage,
+            "custom": bool(p.custom)}
+
+
+CUSTOM_PRESET_START = 1000  # свои правила нумеруются отдельно, чтобы не пересекаться со встроенными
+
+
+class PresetBody(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    rule: Any = None
+    level: str | None = None
+    alert: str | None = None
+    repeatMin: int | None = None
+
+
+def _check_preset(body: PresetBody, s: Session, creating: bool) -> None:
+    fs = body.model_fields_set
+    if creating and not (body.name or "").strip():
+        err(422, "Укажите название правила")
+    if creating or "rule" in fs:
+        if body.rule is None or (isinstance(body.rule, dict) and body.rule.get("children") == []):
+            err(422, "Правило пустое: добавьте хотя бы одно условие")
+        errors = validate(body.rule, registry(s))
+        if errors:
+            err(422, "Правило содержит ошибки", errors)
+    if body.level is not None and body.level not in ("critical", "elevated", "info"):
+        err(422, "Неизвестный уровень важности")
+    if body.alert is not None and body.alert not in ("off", "popup", "sound"):
+        err(422, "Неизвестный тип оповещения")
+
+
+@app.post("/api/presets")
+def create_preset(body: PresetBody, s: Session = DB):
+    """Сохранить своё правило в каталог, чтобы потом быстро добавлять его в колонки."""
+    _check_preset(body, s, creating=True)
+    next_id = max(CUSTOM_PRESET_START, (s.execute(select(func.max(RulePreset.id))).scalar() or 0) + 1)
+    p = RulePreset(id=next_id, name=body.name.strip(), origin="своё", description=(body.description or "").strip(),
+                   rule=body.rule, level=body.level or "info", alert=body.alert or "off",
+                   repeat_min=body.repeatMin if body.repeatMin and body.repeatMin > 0 else None,
+                   stage=1, custom=True, created_at=utcnow())
+    s.add(p)
+    s.commit()
+    return _preset_dict(p)
+
+
+def _custom_preset(s: Session, preset_id: int) -> RulePreset:
+    p = s.get(RulePreset, preset_id) or err(404, "Правило не найдено")
+    if not p.custom:
+        err(403, "Встроенные правила каталога не меняются. Добавьте правило в колонку и меняйте его там")
+    return p
+
+
+@app.patch("/api/presets/{preset_id}")
+def patch_preset(preset_id: int, body: PresetBody, s: Session = DB):
+    p = _custom_preset(s, preset_id)
+    _check_preset(body, s, creating=False)
+    if body.name is not None:
+        p.name = body.name.strip() or p.name
+    if body.description is not None:
+        p.description = body.description.strip()
+    if "rule" in body.model_fields_set:
+        p.rule = body.rule
+    if body.level:
+        p.level = body.level
+    if body.alert:
+        p.alert = body.alert
+    if "repeatMin" in body.model_fields_set:
+        p.repeat_min = body.repeatMin if body.repeatMin and body.repeatMin > 0 else None
+    s.commit()
+    return _preset_dict(p)
+
+
+@app.delete("/api/presets/{preset_id}")
+def delete_preset(preset_id: int, s: Session = DB):
+    """Удаляет своё правило из каталога. Колонки, куда оно уже добавлено, не меняются: правило скопировано в них."""
+    p = _custom_preset(s, preset_id)
+    s.delete(p)
+    s.commit()
+    return {"ok": True}
 
 
 # ---- оповещения ---------------------------------------------------------------------------

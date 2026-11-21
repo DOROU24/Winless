@@ -93,6 +93,8 @@ class Board(Base):
     mode: Mapped[str] = mapped_column(String(16), default="all")  # all | first
     view: Mapped[str] = mapped_column(String(16), default="normal")  # normal | wall
     hide_disappeared: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Раскладка экрана на стене: масштаб, часы, плитки колонок {x, y, w, h, hidden, showCards, maxCards}
+    wall_layout: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     template: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -129,6 +131,8 @@ class RulePreset(Base):
     alert: Mapped[str] = mapped_column(String(16))
     repeat_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
     stage: Mapped[int] = mapped_column(Integer, default=1)
+    custom: Mapped[bool] = mapped_column(Boolean, default=False)  # сохранено пользователем, а не из кода
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class Alert(Base):
@@ -210,6 +214,11 @@ def migrate(eng) -> None:
     with eng.begin() as conn:
         if insp.has_table("acks"):
             conn.execute(text("DROP TABLE acks"))
+        # новые колонки в старых базах
+        for table, col, ddl in (("boards", "wall_layout", "JSON"), ("rule_presets", "custom", "BOOLEAN DEFAULT 0"),
+                                ("rule_presets", "created_at", "DATETIME")):
+            if col not in {c["name"] for c in insp.get_columns(table)}:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
         alert_cols = {c["name"] for c in insp.get_columns("alerts")}
         for col in ("acked", "acked_at"):
             if col in alert_cols:

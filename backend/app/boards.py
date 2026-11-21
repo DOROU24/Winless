@@ -23,7 +23,7 @@ def column_dict(c: Column) -> dict:
 
 def board_dict(b: Board, columns: list[Column] | None = None) -> dict:
     d = {"id": b.id, "name": b.name, "position": b.position, "mode": b.mode, "view": b.view,
-         "hideDisappeared": b.hide_disappeared, "template": b.template}
+         "hideDisappeared": b.hide_disappeared, "template": b.template, "wallLayout": b.wall_layout}
     if columns is not None:
         d["columns"] = [column_dict(c) for c in columns]
     return d
@@ -137,6 +137,7 @@ def incident_levels(s: Session, board: Board, ctx, reg, incidents) -> dict[str, 
 
 def duplicate_board(s: Session, b: Board) -> Board:
     nb = Board(name=f"{b.name} (копия)", mode=b.mode, view=b.view, hide_disappeared=b.hide_disappeared,
+               wall_layout=None,  # id колонок в копии другие, раскладку стены строим заново
                template=b.template, position=b.position + 1)
     s.add(nb)
     s.flush()

@@ -58,7 +58,25 @@ export interface Board {
   view: "normal" | "wall";
   hideDisappeared: boolean;
   template: string | null;
+  wallLayout: WallLayout | null;
   columns?: Column[];
+}
+
+export interface WallTile {
+  x: number; // колонка сетки 0–11
+  y: number; // строка сетки
+  w: number; // ширина в колонках сетки 1–12
+  h: number; // высота в строках сетки
+  hidden: boolean;
+  showCards: boolean;
+  maxCards: number;
+}
+
+export interface WallLayout {
+  scale: number;
+  showClock: boolean;
+  showTitle: boolean;
+  tiles: Record<string, WallTile>;
 }
 
 export interface CardData {
@@ -104,6 +122,7 @@ export interface Preset {
   count: number | null;
   noData: boolean;
   warning: string | null;
+  custom: boolean;
 }
 
 export interface AlertItem {

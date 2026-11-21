@@ -13,7 +13,6 @@ import { Modal } from "./Modal";
 const NAV = [
   { href: "/", label: "Доска", icon: "board" },
   { href: "/graph", label: "Граф связей", icon: "graph" },
-  { href: "/catalog", label: "Каталог правил", icon: "catalog" },
   { href: "/alerts", label: "Оповещения", icon: "bell" },
   { href: "/settings", label: "Настройки", icon: "settings" },
 ];

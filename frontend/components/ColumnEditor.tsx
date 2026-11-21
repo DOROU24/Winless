@@ -49,6 +49,7 @@ export function ColumnEditor({
   const [preview, setPreview] = useState<Preview | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [catalog, setCatalog] = useState(false);
+  const [savingPreset, setSavingPreset] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
 
@@ -158,9 +159,15 @@ export function ColumnEditor({
           <section className="editor__sect">
             <div className="editor__sect-head">
               <h3>Правило</h3>
-              <button className="btn btn--sm" onClick={() => setCatalog(true)}>
-                <Icon name="catalog" size={14} /> Добавить из каталога
-              </button>
+              <div className="row">
+                <button className="btn btn--sm" onClick={() => setCatalog(true)}>
+                  <Icon name="catalog" size={14} /> Добавить из каталога
+                </button>
+                <button className="btn btn--sm" onClick={() => setSavingPreset(true)} disabled={!ruleNode || (preview ? !preview.ok : false)}
+                  title={!ruleNode ? "Сначала добавьте условия" : "Сохранить это правило, чтобы потом добавлять его одной кнопкой"}>
+                  <Icon name="plus" size={14} /> Сохранить в каталог
+                </button>
+              </div>
             </div>
             <RuleBuilder value={rule} onChange={setRule} fields={s.fields} errors={errors} />
           </section>
@@ -271,33 +278,118 @@ export function ColumnEditor({
         </aside>
       </div>
       {catalog && <PresetPicker onPick={addPreset} onClose={() => setCatalog(false)} />}
+      {savingPreset && ruleNode && (
+        <SavePresetDialog
+          rule={ruleNode}
+          defaults={{ name: name === "Новая колонка" ? "" : name, level, alert, repeatMin: repeat === "" ? null : Number(repeat) }}
+          onClose={() => setSavingPreset(false)}
+        />
+      )}
+    </Modal>
+  );
+}
+
+function SavePresetDialog({ rule, defaults, onClose }: {
+  rule: RuleNode;
+  defaults: { name: string; level: Level; alert: AlertMode; repeatMin: number | null };
+  onClose: () => void;
+}) {
+  const s = useStore();
+  const [name, setName] = useState(defaults.name);
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api.post("/api/presets", { name, description, rule, level: defaults.level, alert: defaults.alert, repeatMin: defaults.repeatMin });
+      s.toast(`Правило «${name}» сохранено в каталог`);
+      onClose();
+    } catch (e) {
+      s.toast((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      title="Сохранить правило в каталог"
+      onClose={onClose}
+      footer={
+        <>
+          <span className="grow" />
+          <button className="btn" onClick={onClose}>Отмена</button>
+          <button className="btn btn--primary" onClick={save} disabled={busy || !name.trim()}>Сохранить</button>
+        </>
+      }
+    >
+      <label className="field">
+        <span>Название</span>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Например: критический, меньше 5% срока" autoFocus />
+      </label>
+      <label className="field">
+        <span>Описание</span>
+        <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Когда это правило нужно" />
+      </label>
+      <p className="muted small">
+        Сохранятся условия, уровень «{LEVEL_LABEL[defaults.level].toLowerCase()}» и оповещение «{ALERT_LABEL[defaults.alert].toLowerCase()}».
+        Правило появится в разделе «Мои правила» каталога.
+      </p>
     </Modal>
   );
 }
 
 export function PresetPicker({ onPick, onClose }: { onPick: (p: Preset) => void; onClose: () => void }) {
+  const s = useStore();
   const [items, setItems] = useState<Preset[] | null>(null);
+  const [confirmDel, setConfirmDel] = useState<number | null>(null);
+  const load = () => api.get<Preset[]>("/api/presets").then(setItems);
   useEffect(() => {
-    api.get<Preset[]>("/api/presets").then(setItems);
+    load();
   }, []);
+  const remove = async (p: Preset) => {
+    await api.del(`/api/presets/${p.id}`);
+    s.toast(`Правило «${p.name}» удалено из каталога`);
+    setConfirmDel(null);
+    load();
+  };
+  const mine = items?.filter((p) => p.custom) ?? [];
+  const builtIn = items?.filter((p) => !p.custom) ?? [];
+  const row = (p: Preset, num: string) => (
+    <li key={p.id} className="preset-row">
+      <button className={`preset ${p.noData ? "is-nodata" : ""}`} onClick={() => onPick(p)}>
+        <span className="preset__num">{num}</span>
+        <span className="preset__main">
+          <strong>{p.name}</strong>
+          {p.description && <span>{p.description}</span>}
+          {p.warning && <em className="hint-text">{p.warning}</em>}
+        </span>
+        <span className="preset__count" title="Сколько инцидентов подходит сейчас">{p.count ?? "—"}</span>
+      </button>
+      {p.custom && (
+        <button className={`icon-btn ${confirmDel === p.id ? "is-danger" : ""}`}
+          onClick={() => (confirmDel === p.id ? remove(p) : setConfirmDel(p.id))}
+          aria-label={confirmDel === p.id ? `Точно удалить ${p.name}?` : `Удалить ${p.name}`}
+          title={confirmDel === p.id ? "Нажмите ещё раз, чтобы удалить" : "Удалить из каталога"}>
+          <Icon name="trash" size={14} />
+        </button>
+      )}
+    </li>
+  );
   return (
-    <Modal title="Каталог готовых правил" onClose={onClose}>
+    <Modal title="Каталог правил" onClose={onClose}>
       {!items && <p className="muted">Загружаю…</p>}
-      <ul className="preset-list">
-        {items?.map((p) => (
-          <li key={p.id}>
-            <button className={`preset ${p.noData ? "is-nodata" : ""}`} onClick={() => onPick(p)}>
-              <span className="preset__num">{p.id}</span>
-              <span className="preset__main">
-                <strong>{p.name}</strong>
-                <span>{p.description}</span>
-                {p.warning && <em className="hint-text">{p.warning}</em>}
-              </span>
-              <span className="preset__count">{p.count ?? "—"}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
+      {items && (
+        <>
+          <h3 className="preset-head">Мои правила</h3>
+          {mine.length === 0 ? (
+            <p className="muted small">Пока пусто. Соберите правило в конструкторе и нажмите «Сохранить в каталог»</p>
+          ) : (
+            <ul className="preset-list">{mine.map((p) => row(p, "★"))}</ul>
+          )}
+          <h3 className="preset-head">Готовые правила</h3>
+          <ul className="preset-list">{builtIn.map((p) => row(p, String(p.id)))}</ul>
+        </>
+      )}
     </Modal>
   );
 }

@@ -346,3 +346,59 @@ def test_new_board_does_not_realert(client):
     # а новая загрузка с новым критическим по-прежнему оповещает, в том числе на новых досках
     r = upload(client, "02_new_critical.json")
     assert r["newAlerts"] >= 1
+
+
+def test_custom_presets(client):
+    """Своё правило сохраняется в каталог, переживает перезапуск, добавляется в колонку и удаляется."""
+    upload(client, "00_history.json")
+    upload(client, "01_now.json")
+    set_now(client)
+    rule = {"op": "and", "children": [{"field": "priorityId", "cmp": "eq", "value": 4},
+                                      {"field": "calc.deadlineLeftPct", "cmp": "lt", "value": 5}]}
+    bad = client.post("/api/presets", json={"name": "Плохое", "rule": {"field": "nope", "cmp": "eq", "value": 1}})
+    assert bad.status_code == 422
+    assert client.post("/api/presets", json={"name": "", "rule": rule}).status_code == 422
+    assert client.post("/api/presets", json={"name": "Пустое", "rule": {"op": "and", "children": []}}).status_code == 422
+    p = client.post("/api/presets", json={"name": "Критический, < 5% срока", "description": "Горит прямо сейчас",
+                                          "rule": rule, "level": "critical", "alert": "sound"}).json()
+    assert p["custom"] and p["id"] >= 1000 and p["origin"] == "своё"
+    listed = {x["id"]: x for x in client.get("/api/presets").json()}
+    assert listed[p["id"]]["count"] == 1 and 1 in listed  # встроенные на месте
+
+    # перезапуск: каталог из кода пересоздаётся, своё правило остаётся
+    from app.db import SessionLocal
+    from app.templates import seed
+    with SessionLocal() as s:
+        seed(s)
+    assert p["id"] in {x["id"] for x in client.get("/api/presets").json()}
+
+    # встроенные не меняются и не удаляются
+    assert client.patch("/api/presets/1", json={"name": "x"}).status_code == 403
+    assert client.delete("/api/presets/1").status_code == 403
+
+    # добавление в колонку и правка
+    b = client.get("/api/boards").json()["boards"][0]
+    c = client.post(f"/api/boards/{b['id']}/columns", json={"name": p["name"], "rule": p["rule"], "presetIds": [p["id"]]})
+    assert c.status_code == 200
+    r = client.patch(f"/api/presets/{p['id']}", json={"name": "Горит", "repeatMin": 10}).json()
+    assert r["name"] == "Горит" and r["repeatMin"] == 10
+    assert client.delete(f"/api/presets/{p['id']}").json()["ok"]
+    assert p["id"] not in {x["id"] for x in client.get("/api/presets").json()}
+    # колонка с этим правилом осталась как была
+    col = [x for x in client.get(f"/api/boards/{b['id']}/columns").json() if x["id"] == c.json()["id"]][0]
+    assert col["rule"] == rule
+
+
+def test_wall_layout(client):
+    b = client.get("/api/boards").json()["boards"][0]
+    cid = str(b["columns"][0]["id"])
+    layout = {"scale": 5, "showClock": False, "tiles": {cid: {"x": 20, "y": 2, "w": 6, "h": 99, "hidden": True,
+                                                             "showCards": True, "maxCards": 3, "evil": "<script>"}}}
+    r = client.patch(f"/api/boards/{b['id']}", json={"wallLayout": layout}).json()
+    wl = r["wallLayout"]
+    assert wl["scale"] == 2.0 and wl["showClock"] is False
+    assert wl["tiles"][cid] == {"x": 11, "y": 2, "w": 6, "h": 40, "hidden": True, "showCards": True, "maxCards": 3}
+    assert client.get(f"/api/boards/{b['id']}").json()["wallLayout"] == wl
+    dup = client.post(f"/api/boards/{b['id']}/duplicate").json()
+    assert dup["wallLayout"] is None
+    assert client.patch(f"/api/boards/{b['id']}", json={"wallLayout": None}).json()["wallLayout"] is None

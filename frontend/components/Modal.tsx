@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { Icon } from "./Icon";
+
+// Стек открытых окон: Escape закрывает только верхнее, а не все вложенные сразу.
+const stack: string[] = [];
 
 export function Modal({
   title,
@@ -17,15 +20,27 @@ export function Modal({
   footer?: React.ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const id = useId();
+  // onClose часто новая функция на каждой перерисовке; храним её в ref, чтобы окно не перескакивало
+  // наверх стека при каждом обновлении родителя.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     const prev = document.activeElement as HTMLElement | null;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    stack.push(id);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && stack[stack.length - 1] === id) {
+        e.stopImmediatePropagation();
+        closeRef.current();
+      }
+    };
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
+      stack.splice(stack.indexOf(id), 1);
       prev?.focus?.();
     };
-  }, [onClose]);
+  }, [id]);
   return (
     <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div ref={ref} className={`modal ${wide ? "modal--wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>

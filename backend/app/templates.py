@@ -232,7 +232,7 @@ def seed(s: Session) -> None:
     seed_fields(s)
     # Каталог готовых правил всегда пересоздаётся из кода: в интерфейсе он не редактируется, а правило,
     # добавленное в колонку, копируется в неё и дальше живёт там.
-    s.execute(delete(RulePreset))
+    s.execute(delete(RulePreset).where(RulePreset.custom.is_not(True)))  # свои правила пользователя не трогаем
     s.flush()
     for p in PRESETS:
         s.add(RulePreset(stage=p.get("stage", 1), repeat_min=p.get("repeat_min"),

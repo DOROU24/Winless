@@ -59,6 +59,12 @@ def sample_body(method: str, path: str, ctx: dict) -> dict:
         return {"name": "Проверка", "fields": ["productId"], "windowMin": 600}
     if path.startswith("/api/link-rules/") and method == "PATCH":
         return {"windowMin": 120}
+    if path == "/api/presets" and method == "POST":
+        return {"name": "Своё", "rule": {"field": "priorityId", "cmp": "eq", "value": 4}, "level": "critical"}
+    if path.startswith("/api/presets/") and method == "PATCH":
+        return {"name": "Своё 2"}
+    if path.startswith("/api/boards/") and path.count("/") == 3 and method == "PATCH":
+        return {"name": "Переименована", "mode": "all", "wallLayout": {"scale": 1.2, "tiles": {}}}
     if path == "/api/settings":
         return {"virtualNow": DEMO_NOW, "itsmUrlTemplate": "https://itsm.example/{id}"}
     return {}
@@ -67,7 +73,8 @@ def sample_body(method: str, path: str, ctx: dict) -> dict:
 def fill(path: str, ctx: dict) -> str:
     return (path.replace("{board_id}", str(ctx["board"])).replace("{column_id}", str(ctx["column"]))
             .replace("{incident_id}", ctx["incident"]).replace("{rule_id}", str(ctx["link_rule"]))
-            .replace("{alert_id}", str(ctx["alert"])).replace("{link_id}", str(ctx["link"])))
+            .replace("{alert_id}", str(ctx["alert"])).replace("{link_id}", str(ctx["link"]))
+            .replace("{preset_id}", str(ctx["preset"])))
 
 
 def test_no_endpoint_except_upload_changes_incidents(client):
@@ -91,6 +98,7 @@ def test_no_endpoint_except_upload_changes_incidents(client):
             "link_rule": client.get("/api/link-rules").json()[-1]["id"],
             "alert": (client.get("/api/alerts").json() or [{"id": 0}])[0]["id"],
             "link": (client.get("/api/links").json() or [{"id": 0}])[0]["id"],
+            "preset": ([p["id"] for p in client.get("/api/presets?with_counts=false").json() if p["custom"]] or [1])[-1],
         }
         url = fill(path, ctx)
         before = snapshot_state()
