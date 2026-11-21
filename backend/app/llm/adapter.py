@@ -40,6 +40,13 @@ class LLMError(RuntimeError):
     pass
 
 
+class StepLimit(LLMError):
+    """Модель не закончила за отведённое число шагов; steps — какие инструменты успела вызвать."""
+    def __init__(self, steps: list[dict]):
+        super().__init__("Помощник не уложился в лимит шагов: сформулируйте вопрос проще")
+        self.steps = steps
+
+
 ATTEMPTS = int(os.environ.get("LLM_ATTEMPTS", "4"))
 
 
@@ -210,4 +217,4 @@ def run_tools(system: str, history: list[dict], tools: list[dict], call_tool, ma
                 except ValueError:
                     args = {}
                 msgs.append({"role": "tool", "tool_call_id": c["id"], "content": run(c["function"]["name"], args)})
-    raise LLMError("Помощник не уложился в лимит шагов: сформулируйте вопрос проще")
+    raise StepLimit(steps)

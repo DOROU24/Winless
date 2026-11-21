@@ -244,6 +244,7 @@ class Tools:
         self.reg = registry(self.ctx)
         self.board_id = board_id or get_setting(s, "active_board_id")
         self.proposals: list[dict] = []
+        self.failed: list[str] = []  # проблемы последней неудачной попытки propose_change
         self._incs: list[Incident] | None = None
         self._snaps: dict[int, Snapshot] | None = None
 
@@ -647,6 +648,17 @@ class Tools:
         }
 
     # ---- предложения
+    def _fix_rule(self, n):
+        """Частые промахи модели, которые однозначно исправляются: для флага «= true/false» → «да/нет»."""
+        if isinstance(n, dict) and isinstance(n.get("children"), list):
+            return {**n, "children": [self._fix_rule(c) for c in n["children"]]}
+        if isinstance(n, dict) and n.get("field") in self.reg and self.reg[n["field"]].type == "flag"                 and n.get("cmp") in ("eq", "neq"):
+            v = n.get("value")
+            truthy = v in (True, 1, "true", "True", "да")
+            positive = truthy if n["cmp"] == "eq" else not truthy
+            return {k: x for k, x in n.items() if k != "value"} | {"cmp": "is_true" if positive else "is_false"}
+        return n
+
     def _column(self, spec: dict | None, partial: bool, problems: list[str]) -> dict:
         spec = spec or {}
         out: dict = {}
@@ -655,7 +667,7 @@ class Tools:
         if not partial and not out.get("name"):
             problems.append("У колонки нет названия")
         if "rule" in spec or not partial:
-            rule = spec.get("rule")
+            rule = self._fix_rule(spec.get("rule"))
             errs = validate(rule, self.reg)
             problems += [e["message"] for e in errs]
             if not errs:
@@ -780,7 +792,9 @@ class Tools:
         if kind == "create_column":
             col = self._column(column, False, problems)
             if problems:
-                return {"ok": False, "problems": problems}
+                self.failed = problems
+                return {"ok": False, "problems": problems,
+                        "note": "Предложение НЕ показано. Исправь и вызови propose_change снова"}
             existing = board_columns(self.s, b.id)
             cols = [self._ns(c, {}, c.id) for c in existing] + [self._ns(None, col, -1)]
             total, inside, items = self._count(b, cols, -1)
@@ -798,7 +812,9 @@ class Tools:
             if not patch:
                 problems.append("Нечего менять: в column нет изменений")
             if problems:
-                return {"ok": False, "problems": problems}
+                self.failed = problems
+                return {"ok": False, "problems": problems,
+                        "note": "Предложение НЕ показано. Исправь и вызови propose_change снова"}
             existing = board_columns(self.s, b.id)
             before = self._count(b, [self._ns(x, {}, x.id) for x in existing], c.id)
             after_cols = [self._ns(x, patch if x.id == c.id else {}, x.id) for x in existing]
@@ -812,21 +828,23 @@ class Tools:
                         countBefore=before[1], count=after[0], inColumn=after[1],
                         sample=[_brief(i) for i in after[2][:5]])
         elif kind == "create_board":
-            spec = board or {}
-            name = str(spec.get("name") or "").strip()
+            spec = board if isinstance(board, dict) else {}
+            name = str(spec.get("name") or title or "").strip()[:120]
             if not name:
                 problems.append("У доски нет названия")
             mode = spec.get("mode") if spec.get("mode") in ("all", "first") else "all"
             cols = []
             for n, cs in enumerate(spec.get("columns") or []):
                 sub: list[str] = []
-                col = self._column(cs, False, sub)
+                col = self._column(cs if isinstance(cs, dict) else {}, False, sub)
                 problems += [f"Колонка {n + 1}: {p}" for p in sub]
                 cols.append(col)
             if not cols:
                 problems.append("В доске нет колонок")
             if problems:
-                return {"ok": False, "problems": problems}
+                self.failed = problems
+                return {"ok": False, "problems": problems,
+                        "note": "Предложение НЕ показано. Исправь и вызови propose_change снова"}
             fake = SimpleNamespace(mode=mode, hide_disappeared=True)
             ns = [self._ns(None, c, -(k + 1)) for k, c in enumerate(cols)]
             prop.update(board={"name": name, "mode": mode, "columns": cols})
@@ -837,11 +855,23 @@ class Tools:
                                         "settings": self._settings_text(c), "count": total, "inColumn": inside,
                                         "sample": [_brief(i) for i in items[:3]]})
         else:
-            return {"ok": False, "problems": [f"Неизвестный вид изменения {kind}"]}
+            problems = [f"Неизвестный вид изменения {kind}"]
+        if problems:
+            self.failed = problems
+            return {"ok": False, "problems": problems,
+                    "note": "Предложение НЕ показано. Исправь и вызови propose_change снова; не пиши «Предлагаю», "
+                            "пока не получишь ok: true"}
         self.proposals.append(prop)
+        self.failed = []
         short = {k: v for k, v in prop.items() if k not in ("sample", "column", "board")}
         return {"ok": True, "proposal": short,
                 "note": "Карточка показана координатору. Не применяй сам: он нажмёт «Применить»"}
+
+
+def _plain(problem: str, reg) -> str:
+    """Текст проблемы для человека: подписи полей вместо ключей, без списка операторов."""
+    problem = re.sub(r"\. Можно: .*$", "", problem)
+    return re.sub(r"«([\w.]+)»", lambda m: f"«{reg[m.group(1)].label}»" if m.group(1) in reg else m.group(0), problem)
 
 
 # ---- диалог -----------------------------------------------------------------------------------
@@ -851,7 +881,7 @@ SYSTEM = (Path(__file__).with_name("assistant_prompt.txt")).read_text(encoding="
 
 
 def chat(s: Session, messages: list[dict], board_id: int | None = None, incident_id: str | None = None) -> dict:
-    from .llm.adapter import run_tools
+    from .llm.adapter import StepLimit, run_tools
 
     tools = Tools(s, board_id)
     b = tools._board()
@@ -863,6 +893,19 @@ def chat(s: Session, messages: list[dict], board_id: int | None = None, incident
                + (f" Открыта карточка инцидента {incident_id}." if incident_id else ""))
     history = [{"role": m["role"], "content": str(m["content"])[:6000]} for m in messages[-16:]
                if m.get("role") in ("user", "assistant") and m.get("content")]
-    res = run_tools(SYSTEM + context, history, TOOLS, tools.call, max_steps=10)
-    return {"reply": res["text"].strip(), "proposals": tools.proposals,
+    try:
+        res = run_tools(SYSTEM + context, history, TOOLS, tools.call, max_steps=10)
+    except StepLimit as e:
+        res = {"text": "", "steps": e.steps}
+    reply = res["text"].strip()
+    tried = any(x["tool"] == "propose_change" for x in res["steps"])
+    if tried and not tools.proposals:
+        reply = ("Не получилось собрать предложение — правило не прошло проверку:\n"
+                 + "\n".join(f"- {_plain(p, tools.reg)}" for p in tools.failed[:4])
+                 + "\nПереформулируйте, пожалуйста, или уточните условия.")
+    elif tools.proposals:  # кнопки уже на карточке — вопрос «Создать?» в конце лишний
+        reply = re.sub(r"\s*(Создать|Применить|Добавить|Создаём|Применяем)\s*\?\s*$", "", reply).strip()
+    elif not reply:
+        reply = "Не успел ответить за отведённое число шагов. Сформулируйте вопрос проще или разбейте на части."
+    return {"reply": reply, "proposals": tools.proposals,
             "steps": [{"tool": x["tool"], "label": TOOL_LABELS.get(x["tool"], x["tool"])} for x in res["steps"]]}

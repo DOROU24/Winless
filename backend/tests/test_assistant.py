@@ -145,3 +145,45 @@ def test_chat_runs_tool_loop(client, monkeypatch):
 def test_chat_without_model_is_clear_error(client):
     r = client.post("/api/assistant/chat", json={"messages": [{"role": "user", "content": "привет"}]})
     assert r.status_code == 400 and "LLM_API_KEY" in r.json()["detail"]["message"]
+
+
+def test_board_name_from_title_and_flag_eq_fixed(client):
+    load(client)
+    s, t = tools()
+    r = t.call("propose_change", {"kind": "create_board", "title": "Важные инциденты", "board": {"columns": [
+        {"name": "Активные", "rule": {"field": "calc.isActive", "cmp": "eq", "value": True}},
+        {"name": "Фон", "rule": {"field": "calc.isActive", "cmp": "eq", "value": False}}]}})
+    assert r["ok"], r
+    b = t.proposals[0]["board"]
+    assert b["name"] == "Важные инциденты"
+    assert [c["rule"]["cmp"] for c in b["columns"]] == ["is_true", "is_false"]
+    s.close()
+
+
+def test_chat_never_claims_proposal_without_card(client, monkeypatch):
+    load(client)
+    import app.llm.adapter as adapter
+    monkeypatch.setenv("LLM_API_KEY", "test")
+
+    def fake(system, history, tools_spec, call_tool, max_steps=8):
+        call_tool("propose_change", {"kind": "create_column", "title": "x",
+                                     "column": {"name": "x", "rule": {"field": "calc.isActive", "cmp": "gt", "value": 1}}})
+        return {"text": "Предлагаю колонку «x». Сейчас подходит N.", "steps": [{"tool": "propose_change", "args": {}}]}
+
+    monkeypatch.setattr(adapter, "run_tools", fake)
+    body = client.post("/api/assistant/chat", json={"messages": [{"role": "user", "content": "x"}]}).json()
+    assert body["proposals"] == [] and body["reply"].startswith("Не получилось собрать предложение")
+    assert "calc.isActive" not in body["reply"] and "Активный" in body["reply"]
+
+
+def test_chat_step_limit_is_not_a_server_error(client, monkeypatch):
+    load(client)
+    import app.llm.adapter as adapter
+    monkeypatch.setenv("LLM_API_KEY", "test")
+
+    def fake(system, history, tools_spec, call_tool, max_steps=8):
+        raise adapter.StepLimit([{"tool": "get_fields", "args": {}}])
+
+    monkeypatch.setattr(adapter, "run_tools", fake)
+    r = client.post("/api/assistant/chat", json={"messages": [{"role": "user", "content": "x"}]})
+    assert r.status_code == 200 and "шагов" in r.json()["reply"]
