@@ -221,7 +221,7 @@ function TopBar() {
       <Link href="/" className="top__brand">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img className="top__logo" src="/brand/logo.svg" alt="МТС" width={40} height={40} />
-        <span>Инциденты в фокусе</span>
+        <span className="top__name">КООРАДАР</span>
       </Link>
       <div className="top__actions">
         {s.ai?.enabled && (s.ai.running || s.ai.queuedUploads > 0) && (

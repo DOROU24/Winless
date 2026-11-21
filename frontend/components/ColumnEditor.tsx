@@ -373,7 +373,10 @@ export function PresetPicker({ onPick, onClose }: { onPick: (p: Preset) => void;
       <button className={`preset ${p.noData ? "is-nodata" : ""}`} onClick={() => onPick(p)}>
         <span className="preset__num">{num}</span>
         <span className="preset__main">
-          <strong>{p.name}</strong>
+          <strong>
+            {p.name}
+            {usesAi(p.rule) && <i className="ai-mark" title="Правило использует сигналы ИИ (этап 2)">AI</i>}
+          </strong>
           {p.description && <span>{p.description}</span>}
           {p.warning && <em className="hint-text">{p.warning}</em>}
         </span>
@@ -406,4 +409,11 @@ export function PresetPicker({ onPick, onClose }: { onPick: (p: Preset) => void;
       )}
     </Modal>
   );
+}
+
+// Правило опирается на ИИ, если в нём есть хоть одно поле ai.*
+function usesAi(n: RuleNode | null | undefined): boolean {
+  if (!n) return false;
+  if ("children" in n) return n.children.some(usesAi);
+  return String(n.field ?? "").startsWith("ai.") || String((n.args as Record<string, unknown> | undefined)?.field ?? "").startsWith("ai.");
 }

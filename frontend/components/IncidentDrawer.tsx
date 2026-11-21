@@ -157,10 +157,10 @@ export function IncidentDrawer({ id }: { id: string }) {
             </button>
             {allFields && (
               <dl className="kv kv--all">
-                {Object.keys(data).map((k) => (
-                  <div key={k}>
-                    <dt title={k}>{s.fieldMap[k]?.label ?? k}</dt>
-                    <dd>{f(k)}</dd>
+                {uniqueFields(Object.keys(data), data, s.fieldMap).map(({ label, key, keys }) => (
+                  <div key={key}>
+                    <dt title={keys.join(", ")}>{label}</dt>
+                    <dd>{f(key)}</dd>
                   </div>
                 ))}
               </dl>
@@ -297,4 +297,21 @@ function AiBlock({ ai }: { ai: NonNullable<IncidentDetail["ai"]> }) {
       )}
     </section>
   );
+}
+
+// «Все поля из выгрузки»: каждое поле один раз. В выгрузке пары «код + текст» (stateId и state, priorityId и
+// priority…) подписаны одинаково — показываем одну строку, текстовую, если она есть; ключи видны в подсказке.
+function uniqueFields(keys: string[], data: Record<string, unknown>, fieldMap: Record<string, { label: string } | undefined>) {
+  const groups = new Map<string, string[]>();
+  for (const k of keys) {
+    const label = fieldMap[k]?.label ?? k;
+    groups.set(label, [...(groups.get(label) ?? []), k]);
+  }
+  const filled = (k: string) => data[k] !== null && data[k] !== undefined && data[k] !== "";
+  const isText = (k: string) => typeof data[k] === "string" && !/^\d+$/.test(String(data[k]));
+  return [...groups.entries()].map(([label, ks]) => ({
+    label,
+    keys: ks,
+    key: ks.find((k) => filled(k) && isText(k)) ?? ks.find(filled) ?? ks[0],
+  }));
 }

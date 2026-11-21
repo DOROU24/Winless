@@ -896,3 +896,21 @@ input:focus, select:focus, textarea:focus, input:focus-visible, select:focus-vis
 .lnk__main { flex-wrap: wrap; align-items: baseline; }
 .lnk__head { white-space: normal; overflow: visible; text-overflow: clip; flex: 1 1 100%; }
 .kv { grid-template-columns: minmax(150px, 40%) minmax(0, 1fr); }
+
+/* маркер «AI» у правил каталога */
+.ai-mark { display: inline-block; margin-left: 8px; padding: 0 6px; border-radius: 6px; vertical-align: 2px;
+  font: 700 10px/16px var(--font); font-style: normal; letter-spacing: 0.04em; color: #8a2ea0;
+  background: #f6dcf8; border: 1px solid #e7b6ee; }
+
+/* логотип: знак МТС и название широким шрифтом, как «МТС Поддержка» */
+.top__brand { gap: 18px; }
+.top__name { font-family: "Unbounded", var(--font); font-weight: 500; font-size: 22px; letter-spacing: 0.01em; color: #1d2023; line-height: 1; }
+
+/* карточка задачи никогда не выходит за колонку: плашки переносятся, длинные значения обрезаются */
+.card__top { flex-wrap: wrap; row-gap: 4px; }
+.card__id { flex: 1 1 auto; }
+.card__fields { grid-template-columns: auto minmax(0, 1fr); }
+.card__fields dt { overflow: hidden; text-overflow: ellipsis; }
+.card__title { overflow-wrap: anywhere; }
+.card__open { overflow: hidden; }
+.card, .card-wrap { width: 100%; }
