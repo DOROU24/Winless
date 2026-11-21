@@ -1,0 +1,141 @@
+"use client";
+
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import type { CardData, LayoutColumn } from "@/lib/api";
+import { useStore } from "@/lib/store";
+import { fmtDuration, fmtValue, LEVEL_LABEL } from "@/lib/format";
+import { Icon } from "./Icon";
+
+export function ColumnView({
+  column,
+  onEdit,
+  onToggle,
+}: {
+  column: LayoutColumn;
+  onEdit: () => void;
+  onToggle: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: column.id });
+  const style = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    "--col": column.color,
+  } as React.CSSProperties;
+
+  if (column.collapsed) {
+    return (
+      <section ref={setNodeRef} style={style} className={`col col--collapsed ${isDragging ? "is-dragging" : ""}`}>
+        <button className="col__rail" onClick={onToggle} title="Развернуть колонку">
+          <span className="col__count">{column.total}</span>
+          <span className="col__vname">{column.name}</span>
+        </button>
+      </section>
+    );
+  }
+
+  return (
+    <section ref={setNodeRef} style={style} className={`col col--${column.level} ${isDragging ? "is-dragging" : ""}`}
+      aria-label={`${column.name}: ${column.total}`}>
+      <header className="col__head">
+        <button className="col__grip" {...attributes} {...listeners} aria-label="Перетащить колонку">
+          <Icon name="grip" size={14} />
+        </button>
+        <h2 className="col__name">{column.name}</h2>
+        <span className="col__count">{column.total}</span>
+        <span className="grow" />
+        {column.alert !== "off" && (
+          <span className="col__alert" title={column.alert === "sound" ? "Оповещение: окно и звук" : "Оповещение: окно"}>
+            <Icon name={column.alert === "sound" ? "volume" : "bell"} size={13} />
+          </span>
+        )}
+        <button className="icon-btn" onClick={onEdit} aria-label="Настроить колонку" title="Настроить колонку">
+          <Icon name="edit" size={14} />
+        </button>
+        <button className="icon-btn" onClick={onToggle} aria-label="Свернуть колонку" title="Свернуть">
+          <Icon name="collapse" size={14} />
+        </button>
+      </header>
+      <div className="col__level">{LEVEL_LABEL[column.level]}</div>
+      {column.ruleErrors.length > 0 && (
+        <div className="col__error" role="alert">
+          <Icon name="warning" size={14} />
+          <div>
+            <strong>Правило с ошибкой</strong>
+            {column.ruleErrors.map((e, i) => <p key={i}>{e.message}</p>)}
+            <button className="link-btn" onClick={onEdit}>Исправить правило</button>
+          </div>
+        </div>
+      )}
+      <div className="col__body">
+        {column.cards.length === 0 && (
+          <p className="col__empty">{column.rule ? "Сейчас ничего не подходит" : "Правила нет, подходят все"}</p>
+        )}
+        {column.cards.map((c) => (
+          <Card key={c.id} card={c} fields={column.cardFields} />
+        ))}
+        {column.hidden > 0 && (
+          <button className="col__more" onClick={onEdit}>
+            ещё {column.hidden}
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// Запал срока: полоса слева показывает, сколько отведённого времени осталось.
+export function Fuse({ pct, overdue }: { pct: number | null; overdue: boolean }) {
+  if (pct === null) return <span className="fuse fuse--none" title="Срок не задан" />;
+  const left = Math.max(0, Math.min(100, pct));
+  const tone = overdue || pct <= 0 ? "out" : pct < 10 ? "crit" : pct < 35 ? "warn" : "ok";
+  return (
+    <span className={`fuse fuse--${tone}`} title={overdue ? "Срок прошёл" : `Осталось ${Math.round(pct)}% срока`}>
+      <i style={{ height: `${left}%` }} />
+    </span>
+  );
+}
+
+export function Card({ card, fields }: { card: CardData; fields: string[] }) {
+  const s = useStore();
+  const shown = fields.filter((f) => f !== "id");
+  return (
+    <article className="card">
+      <Fuse pct={card.deadlineLeftPct} overdue={card.overdue} />
+      <button className="card__open" onClick={() => s.openIncident(card.id)} aria-label={`Открыть ${card.id}`}>
+        <div className="card__top">
+          <span className="mono card__id">{card.id}</span>
+          {card.priorityId !== null && <span className={`prio prio--${card.priorityId}`}>{card.priority}</span>}
+          {card.isNew && <span className="tag tag--new">новый</span>}
+          {card.disappeared && <span className="tag">пропал</span>}
+        </div>
+        <p className="card__title">{card.header || "Без заголовка"}</p>
+        {card.deadlineLeftMin !== null && card.stateId !== null && [0, 2].includes(card.stateId) && (
+          <p className={`card__deadline ${card.overdue ? "is-over" : ""}`}>
+            {card.overdue ? `Просрочен на ${fmtDuration(-card.deadlineLeftMin)}` : `До срока ${fmtDuration(card.deadlineLeftMin)}`}
+          </p>
+        )}
+        <dl className="card__fields">
+          {shown.map((f) => {
+            const fd = s.fieldMap[f];
+            const v = card.values[f];
+            if (v === null || v === undefined || v === "") return null;
+            return (
+              <div key={f}>
+                <dt>{fd?.label ?? f}</dt>
+                <dd>{fmtValue(fd, v)}</dd>
+              </div>
+            );
+          })}
+        </dl>
+        {card.why.length > 0 && (
+          <ul className="card__why" aria-label="Почему здесь">
+            {card.why.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        )}
+      </button>
+    </article>
+  );
+}

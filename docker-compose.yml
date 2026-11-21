@@ -1,0 +1,30 @@
+# Запуск всего приложения одной командой:  docker compose up --build
+# Открыть: http://localhost:3000   API: http://localhost:8000/api/health
+services:
+  backend:
+    build: ./backend
+    ports: ["8000:8000"]
+    environment:
+      - MTS_DB_PATH=/data/data.sqlite3
+      # Этап 2 (ИИ): без ключа сигналы ИИ помечены «недоступно», остальное работает
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_PROVIDER=${LLM_PROVIDER:-anthropic}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - LLM_BASE_URL=${LLM_BASE_URL:-}
+    volumes: ["dbdata:/data"]   # база переживает перезапуск контейнера
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: http://backend:8000
+    ports: ["3000:3000"]
+    depends_on:
+      backend:
+        condition: service_healthy
+volumes:
+  dbdata:

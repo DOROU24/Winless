@@ -1,0 +1,324 @@
+"""Сквозные тесты: загрузка, история, реестр полей, правила каталога на демо-данных, доски, оповещения, связи."""
+import json
+import time
+
+from conftest import demo_ids, upload
+
+DEMO_NOW = "2026-11-21T09:00:00Z"
+FILES = ["00_history.json", "01_now.json", "02_new_critical.json", "03_reassign_and_resolve.json",
+         "04_reopen_again.json", "05_complaints_growth.json", "06_disk_full_again.json"]
+
+
+def set_now(client):
+    r = client.patch("/api/settings", json={"virtualNow": DEMO_NOW})
+    assert r.status_code == 200
+
+
+def preset_matches(client, pid):
+    presets = {p["id"]: p for p in client.get("/api/presets").json()}
+    r = client.post("/api/rules/preview", json={"rule": presets[pid]["rule"], "limit": 500}).json()
+    assert r["ok"], r
+    return {x["id"] for x in r["items"]}
+
+
+def test_health_and_first_board(client):
+    assert client.get("/api/health").json()["ok"]
+    boards = client.get("/api/boards").json()
+    assert [b["name"] for b in boards["boards"]] == ["Фокус внимания"]
+    cols = [c["name"] for c in boards["boards"][0]["columns"]]
+    assert cols == ["Срочно", "Нужно передать", "Срок", "Решение буксует", "Проверить"]
+    assert boards["boards"][0]["mode"] == "first"
+
+
+def test_ingest_events_and_idempotency(client):
+    upload(client, "00_history.json")
+    r1 = upload(client, "01_now.json")
+    assert r1["created"] == 57 and r1["disappeared"] == 35 and r1["changed"] == 3
+    r2 = upload(client, "02_new_critical.json")
+    assert r2["created"] == 1 and r2["changed"] == 0 and r2["disappeared"] == 0
+    again = upload(client, "02_new_critical.json")
+    assert again["created"] == 0 and again["changed"] == 0 and again["disappeared"] == 0
+    ids = demo_ids()
+    card = client.get(f"/api/incidents/{ids['reopened']}").json()
+    changes = [e for e in card["events"] if e["type"] == "field_changed" and e["field"] == "stateId"]
+    assert changes and changes[0]["old"] == 7 and changes[0]["new"] == 0
+
+
+def test_rules_work_before_first_upload(client):
+    """Регресс: до первой загрузки стандартные поля уже есть в реестре."""
+    r = client.post("/api/rules/validate", json={"rule": {"op": "and", "children": [
+        {"field": "priorityId", "cmp": "eq", "value": 4},
+        {"field": "calc.deadlineLeftPct", "cmp": "lt", "value": 5}]}}).json()
+    assert r["ok"], r
+    b = client.get("/api/boards").json()["boards"][0]
+    c = client.post(f"/api/boards/{b['id']}/columns", json={"name": "x", "rule": {"field": "priorityId", "cmp": "eq", "value": 4}})
+    assert c.status_code == 200
+    fields = {f["key"]: f for f in client.get("/api/fields").json()}
+    assert fields["priorityId"]["labels"]["4"] == "Наивысший"
+
+
+def test_root_object_warning(client):
+    payload = json.dumps({"meta": 1, "items": [{"id": "X1", "stateId": 0, "state": "Назначен"}]}).encode()
+    r = client.post("/api/snapshots", files={"file": ("x.json", payload, "application/json")}).json()
+    assert r["created"] == 1 and any("объект" in w for w in r["warnings"])
+    bad = client.post("/api/snapshots", files={"file": ("x.json", b"not json", "application/json")})
+    assert bad.status_code == 400
+
+
+def test_field_registry(client):
+    upload(client, "01_now.json")
+    fields = {f["key"]: f for f in client.get("/api/fields").json()}
+    assert fields["priorityId"]["type"] == "number"
+    assert fields["priorityId"]["labels"]["4"] == "Наивысший"
+    assert fields["stateId"]["labels"]["20"] == "Исследование ситуации"
+    assert fields["submitDate"]["type"] == "date"
+    assert fields["isMaster"]["type"] == "flag"
+    assert fields["complaintsCount"]["type"] == "number"  # неизвестное поле подхватилось
+    assert fields["waitingExitDate"]["type"] in ("text", "date")
+    for k in ("calc.deadlineLeftPct", "calc.idleMin", "hist.transitions"):
+        assert k in fields
+    assert not any(k.startswith("user.") for k in fields)  # только просмотр: полей пользователя нет
+    assert fields["ai.weakSolution"]["available"] is False
+
+
+def test_calc_fields_and_virtual_now(client):
+    upload(client, "00_history.json")
+    upload(client, "01_now.json")
+    set_now(client)
+    ids = demo_ids()
+    c1 = client.get(f"/api/incidents/{ids['c1']}").json()["calc"]
+    assert 0 < c1["calc.deadlineLeftPct"] < 5 and c1["calc.deadlineLeftMin"] == 10
+    assert c1["calc.isActive"] and not c1["calc.overdue"] and c1["calc.idleMin"] is None
+    c2 = client.get(f"/api/incidents/{ids['c2']}").json()["calc"]
+    assert c2["calc.idleMin"] == 45 and c2["calc.isNew"]
+    # пропавший из истории
+    chain = client.get(f"/api/incidents/{ids['disk_chain'][0]}").json()
+    assert chain["calc"]["calc.disappeared"] and chain["calc"]["calc.deadlineLeftMin"] < 0
+    assert chain["calc"]["calc.overdue"] is False  # закрыт — не просрочен
+    # «сейчас» сдвинули — значения поменялись
+    client.patch("/api/settings", json={"virtualNow": "2026-11-21T09:20:00Z"})
+    c1b = client.get(f"/api/incidents/{ids['c1']}").json()["calc"]
+    assert c1b["calc.overdue"] and c1b["calc.deadlineLeftMin"] == -10
+
+
+def test_rule_validation_errors(client):
+    upload(client, "01_now.json")
+    r = client.post("/api/rules/validate", json={"rule": {"op": "and", "children": [
+        {"field": "nope", "cmp": "eq", "value": 1},
+        {"field": "priorityId", "cmp": "contains", "value": "x"},
+        {"field": "priorityId", "cmp": "eq", "value": "abc"},
+        {"field": "hist.changes", "cmp": "gte", "value": 2},
+    ]}}).json()
+    assert not r["ok"] and len(r["errors"]) == 4
+    assert "nope" in r["errors"][0]["message"] and r["errors"][0]["path"] == "rule.children[0]"
+
+
+def test_operators(client):
+    upload(client, "01_now.json")
+    set_now(client)
+    def count(rule):
+        return client.post("/api/rules/preview", json={"rule": rule}).json()["count"]
+    total = count(None)
+    assert total == 60
+    assert count({"field": "priorityId", "cmp": "eq", "value": 4}) == 3
+    assert count({"field": "priorityId", "cmp": "between", "value": [3, 4]}) == count(
+        {"field": "priorityId", "cmp": "gte", "value": 3})
+    assert count({"field": "header", "cmp": "contains", "value": "оплате"}) >= 1
+    assert count({"field": "deadline", "cmp": "is_empty"}) == 2
+    assert count({"field": "submitDate", "cmp": "within_last_min", "value": 60}) >= 2
+    assert count({"field": "calc.isActive", "cmp": "is_true"}) + count({"field": "calc.isActive", "cmp": "is_false"}) == total
+    assert count({"field": "stateId", "cmp": "not_in", "value": [10]}) <= total
+
+
+def test_catalog_rules_on_demo(client):
+    ids = demo_ids()
+    upload(client, "00_history.json")
+    upload(client, "01_now.json")
+    set_now(client)
+    assert {ids["c1"], ids["c2"], ids["c3"]} <= preset_matches(client, 1)
+    assert ids["c2"] in preset_matches(client, 3)
+    assert len(preset_matches(client, 2)) == 2
+    assert len(preset_matches(client, 4)) >= 2
+    assert len(preset_matches(client, 5)) >= 2
+    assert len(preset_matches(client, 9)) == 2
+    assert len(preset_matches(client, 10)) == 2
+    upload(client, "02_new_critical.json")
+    assert preset_matches(client, 1) == {ids["new_crit"]}
+    upload(client, "03_reassign_and_resolve.json")
+    assert ids["reassigned"] in preset_matches(client, 2)
+    assert ids["team_changes"] in preset_matches(client, 7)
+    upload(client, "04_reopen_again.json")
+    assert ids["reopened"] in preset_matches(client, 6)
+    assert ids["priority_ups"] in preset_matches(client, 8)
+    upload(client, "05_complaints_growth.json")
+    assert preset_matches(client, 11) == {ids["complaints"]}
+    presets = {p["id"]: p for p in client.get("/api/presets").json()}
+    assert presets[11]["noData"] is False and presets[12]["noData"] is True
+
+
+def test_preset_11_without_field(client):
+    payload = json.dumps([{"id": "A", "priorityId": 1, "priority": "Низкий"}]).encode()
+    client.post("/api/snapshots", files={"file": ("a.json", payload, "application/json")})
+    p = {x["id"]: x for x in client.get("/api/presets").json()}[11]
+    assert p["noData"] and "complaintsCount" in p["warning"]
+
+
+def test_board_crud_layout_and_modes(client):
+    upload(client, "00_history.json")
+    upload(client, "01_now.json")
+    set_now(client)
+    b = client.post("/api/boards", json={"name": "Моя"}).json()
+    c1 = client.post(f"/api/boards/{b['id']}/columns", json={
+        "name": "Критич. <5%", "rule": {"op": "and", "children": [
+            {"field": "priorityId", "cmp": "eq", "value": 4}, {"field": "calc.deadlineLeftPct", "cmp": "lt", "value": 5}]},
+        "level": "critical", "alert": "sound"}).json()
+    c2 = client.post(f"/api/boards/{b['id']}/columns", json={
+        "name": "Все критические", "rule": {"field": "priorityId", "cmp": "eq", "value": 4},
+        "sortField": "calc.deadlineLeftPct", "sortDir": "asc", "limit": 2}).json()
+    lay = client.get(f"/api/boards/{b['id']}/layout").json()
+    cols = {c["id"]: c for c in lay["columns"]}
+    assert cols[c1["id"]]["total"] == 1 and cols[c2["id"]]["total"] == 3 and cols[c2["id"]]["hidden"] == 1
+    assert any("Осталось до срока" in w for w in cols[c1["id"]]["cards"][0]["why"])
+    assert "Приоритет = 4 (Наивысший)" in cols[c1["id"]]["cards"][0]["why"]
+    client.patch(f"/api/boards/{b['id']}", json={"mode": "first"})
+    lay = client.get(f"/api/boards/{b['id']}/layout").json()
+    assert {c["id"]: c for c in lay["columns"]}[c2["id"]]["total"] == 2
+    client.patch(f"/api/boards/{b['id']}", json={"columnOrder": [c2["id"], c1["id"]]})
+    lay = client.get(f"/api/boards/{b['id']}/layout").json()
+    assert lay["columns"][0]["id"] == c2["id"] and lay["columns"][1]["total"] == 0
+    bad = client.patch(f"/api/boards/{b['id']}/columns/{c1['id']}", json={"rule": {"field": "x", "cmp": "eq", "value": 1}})
+    assert bad.status_code == 422
+    dup = client.post(f"/api/boards/{b['id']}/duplicate").json()
+    assert len(dup["columns"]) == 2
+    mts = client.post("/api/boards/from-template", json={"template": "mts"}).json()
+    assert [c["name"] for c in mts["columns"]][0] == "Критические"
+
+
+def test_alerts_read_only(client):
+    ids = demo_ids()
+    upload(client, "00_history.json")
+    upload(client, "01_now.json")
+    set_now(client)
+    client.get("/api/alerts/due")
+    r = upload(client, "02_new_critical.json")
+    assert r["newAlerts"] >= 1
+    al = [a for a in client.get("/api/alerts").json() if a["incidentId"] == ids["new_crit"]]
+    assert len(al) == 1 and al[0]["level"] == "critical" and al[0]["mode"] == "sound"
+    assert al[0]["repeatMin"] is None and al[0]["inColumn"] is True  # правило 1: окно и звук, без повтора
+    assert "acked" not in al[0]
+    due = client.get("/api/alerts/due").json()["due"]
+    assert any(a["incidentId"] == ids["new_crit"] for a in due)
+    assert not any(a["incidentId"] == ids["new_crit"] for a in client.get("/api/alerts/due").json()["due"])
+    # повторная загрузка того же файла — новых оповещений нет
+    assert upload(client, "02_new_critical.json")["newAlerts"] == 0
+    # эндпоинтов подтверждения больше нет
+    assert client.post(f"/api/alerts/{al[0]['id']}/ack").status_code in (404, 405)
+    assert client.post(f"/api/incidents/{ids['new_crit']}/ack").status_code in (404, 405)
+    assert client.get("/api/alerts?unacked=true").status_code == 200  # параметр просто игнорируется
+
+
+def test_alert_repeat_while_in_column(client):
+    """Повтор идёт каждые N минут, пока инцидент остаётся в колонке, и прекращается, когда он вышел."""
+    from datetime import timedelta
+    from app.db import Alert, SessionLocal
+    ids = demo_ids()
+    upload(client, "00_history.json")
+    upload(client, "01_now.json")
+    set_now(client)
+    b = client.post("/api/boards", json={"name": "Повторы"}).json()
+    col = client.post(f"/api/boards/{b['id']}/columns", json={
+        "name": "Новые критические", "rule": {"op": "and", "children": [
+            {"field": "priorityId", "cmp": "eq", "value": 4}, {"field": "calc.isNew", "cmp": "is_true"}]},
+        "alert": "popup", "repeatMin": 5}).json()
+    client.get("/api/alerts/due")  # первый показ всех оповещений
+
+    def rewind():
+        with SessionLocal() as s:
+            for a in s.query(Alert).filter(Alert.column_ids.isnot(None)).all():
+                if col["id"] in (a.column_ids or []) and a.last_fired_at:
+                    a.last_fired_at -= timedelta(minutes=6)
+            s.commit()
+
+    def due_here():
+        return {a["incidentId"] for a in client.get("/api/alerts/due").json()["due"] if "Новые критические" in a["columns"]}
+
+    rewind()
+    assert ids["c1"] in due_here()  # всё ещё в колонке — повтор
+    upload(client, "02_new_critical.json")  # c1 больше не новый и выходит из колонки
+    rewind()
+    assert ids["c1"] not in due_here()
+    c1_alert = [a for a in client.get("/api/alerts").json() if a["incidentId"] == ids["c1"] and a["column"] == "Новые критические"]
+    assert c1_alert and c1_alert[0]["inColumn"] is False
+
+
+def test_links_only_from_rules(client):
+    ids = demo_ids()
+    upload(client, "00_history.json")
+    upload(client, "01_now.json")
+    links = client.get("/api/links").json()
+    assert links and all(l["source"] == "auto" for l in links)
+    assert client.post("/api/links", json={"src": ids["c1"], "dst": ids["c2"], "type": "cause"}).status_code == 405
+    assert client.delete(f"/api/links/{links[0]['id']}").status_code in (404, 405)
+    card = client.get(f"/api/incidents/{ids['c1']}").json()
+    assert all(l["source"] == "auto" for l in card["links"]["outgoing"] + card["links"]["incoming"])
+    g = client.get("/api/graph").json()
+    assert g["nodes"] and g["edges"]
+    rules = client.get("/api/link-rules").json()
+    client.patch(f"/api/link-rules/{rules[0]['id']}", json={"enabled": False})
+    assert not any(l["ruleId"] == rules[0]["id"] for l in client.get("/api/links").json())
+
+
+def test_legacy_user_acked_rule(client):
+    """Сохранённое правило с удалённым user.acked помечается ошибкой и не роняет приложение."""
+    from app.db import Column, SessionLocal
+    upload(client, "00_history.json")
+    upload(client, "01_now.json")
+    set_now(client)
+    legacy = {"op": "and", "children": [{"field": "priorityId", "cmp": "eq", "value": 4},
+                                        {"field": "user.acked", "cmp": "is_false"}]}
+    v = client.post("/api/rules/validate", json={"rule": legacy}).json()
+    assert not v["ok"] and "только для просмотра" in v["errors"][0]["message"]
+    board = client.get("/api/boards").json()["boards"][0]
+    with SessionLocal() as s:  # как будто правило сохранено старой версией приложения
+        s.add(Column(board_id=board["id"], position=99, name="Старая", rule=legacy, card_fields=["id"],
+                     level="critical", alert="sound"))
+        s.commit()
+    lay = client.get(f"/api/boards/{board['id']}/layout")
+    assert lay.status_code == 200
+    old = [c for c in lay.json()["columns"] if c["name"] == "Старая"][0]
+    assert old["ruleErrors"] and "user.acked" in old["ruleErrors"][0]["message"] and old["total"] == 0
+    assert client.get("/api/alerts/due").status_code == 200
+    assert client.get("/api/graph").status_code == 200
+
+
+def test_templates_and_presets_have_no_user_fields(client):
+    from app.rules import rule_fields
+    from app.templates import PRESETS, TEMPLATES
+    for p in PRESETS:
+        assert not any(f.startswith("user.") for f in rule_fields(p["rule"])), p["name"]
+    for t in TEMPLATES.values():
+        for c in t["columns"]:
+            assert not any(f.startswith("user.") for f in rule_fields(c.get("rule"))), c["name"]
+    p1 = {p["id"]: p for p in client.get("/api/presets").json()}[1]
+    assert p1["name"] == "Новый критический" and p1["repeatMin"] is None and p1["alert"] == "sound"
+    assert rule_fields(p1["rule"]) == {"priorityId", "calc.isNew", "calc.isActive"}
+
+
+def test_performance_5000(client):
+    import random
+    rnd = random.Random(1)
+    recs = []
+    base = json.loads(open(__import__("conftest").DEMO / "01_now.json", encoding="utf-8").read())
+    for i in range(5000):
+        r = dict(rnd.choice(base))
+        r["id"] = f"P{i:06d}"
+        recs.append(r)
+    client.post("/api/snapshots", files={"file": ("big.json", json.dumps(recs).encode(), "application/json")})
+    b = client.post("/api/boards", json={"name": "Нагрузка"}).json()
+    presets = client.get("/api/presets?with_counts=false").json()
+    for i in range(20):
+        p = presets[i % 11]
+        client.post(f"/api/boards/{b['id']}/columns", json={"name": p["name"], "rule": p["rule"], "limit": 30})
+    t = time.perf_counter()
+    client.get(f"/api/boards/{b['id']}/layout")
+    assert time.perf_counter() - t < 3.0  # с запасом на медленные машины CI

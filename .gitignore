@@ -1,0 +1,22 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# База и данные пользователя
+backend/data.sqlite3*
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/next-env.d.ts
+*.tsbuildinfo
+
+# Локальные настройки окружения и редактора
+.claude/
+.vscode/
+.idea/
+.env
+.env.*
+!.env.example
