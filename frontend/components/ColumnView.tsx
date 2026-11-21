@@ -152,9 +152,11 @@ export function Card({ card, fields }: { card: CardData; fields: string[] }) {
     </article>
     {members.length > 0 && (
       <div className="wave">
-        <button className="wave__toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
-          <Icon name={open ? "chevronDown" : "chevron"} size={13} />
-          ещё {members.length} в этой волне
+        <button className={`wave__toggle ${open ? "is-open" : ""}`} onClick={() => setOpen(!open)} aria-expanded={open}>
+          <span className="wave__stack" aria-hidden><i /><i /><i /></span>
+          <span className="wave__label">{open ? "Свернуть волну" : "Ещё в этой волне"}</span>
+          <b className="wave__count">{members.length}</b>
+          <Icon name="chevronDown" size={16} className="wave__chev" />
         </button>
         {open && (
           <div className="wave__list">

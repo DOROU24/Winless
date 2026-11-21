@@ -51,6 +51,8 @@ export function Assistant() {
   const s = useStore();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [front, setFront] = useState(false); // поверх карточки инцидента (открыли кнопкой «Кому отдать?»)
+  const askedFor = useRef<string | null>(null);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -96,6 +98,11 @@ export function Assistant() {
     }
   };
 
+  // открыли другую задачу (например, номер из ответа) — она встаёт поверх помощника
+  useEffect(() => {
+    if (s.openIncidentId && s.openIncidentId !== askedFor.current) setFront(false);
+  }, [s.openIncidentId]);
+
   // пока панель открыта, всплывающие оповещения сдвигаются левее, чтобы не закрывать диалог
   useEffect(() => {
     document.body.classList.toggle("assistant-open", open);
@@ -105,6 +112,8 @@ export function Assistant() {
   useEffect(() => {
     const onAsk = (e: Event) => {
       setOpen(true);
+      setFront(true);
+      askedFor.current = s.openIncidentId;
       send((e as CustomEvent<string>).detail);
     };
     window.addEventListener("assistant:ask", onAsk);
@@ -141,7 +150,7 @@ export function Assistant() {
         Помощник
       </button>
       {open && (
-        <aside id="assistant" className="assistant" aria-label="Помощник координатора">
+        <aside id="assistant" className={`assistant ${front ? "assistant--front" : ""}`} aria-label="Помощник координатора">
           <header className="assistant__head">
             <Icon name="spark" />
             <strong>Помощник</strong>
