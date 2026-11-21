@@ -76,11 +76,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className={`shell ${narrow ? "shell--narrow" : ""}`}>
+      <TopBar />
       <Sidebar narrow={narrow} onToggle={toggleNarrow} />
-      <div className="main">
-        <TopBar />
-        <main className="page">{children}</main>
-      </div>
+      <main className={`page ${path.startsWith("/alerts") ? "page--gray" : ""}`}>{children}</main>
       {s.openIncidentId && <IncidentDrawer id={s.openIncidentId} />}
       <Popups />
       <Toasts />
@@ -105,15 +103,6 @@ function Sidebar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void }
 
   return (
     <aside className="side">
-      <div className="side__brand">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img className="side__logo" src="/brand/logo.svg" alt="МТС" width={32} height={32} />
-        <span>Пульт координатора</span>
-        <button className="icon-btn side__toggle" onClick={onToggle} aria-expanded={!narrow}
-          aria-label={narrow ? "Развернуть панель" : "Свернуть панель"} title={narrow ? "Развернуть панель" : "Свернуть панель"}>
-          <Icon name="panel" />
-        </button>
-      </div>
       <nav className="side__nav" aria-label="Разделы">
         {NAV.map((n) => (
           <Link key={n.href} href={n.href} className={`side__link ${path === n.href ? "is-active" : ""}`} title={narrow ? n.label : undefined}>
@@ -145,33 +134,38 @@ function Sidebar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void }
                   if (path !== "/") router.push("/");
                 }}
               >
-                <Icon name="folder" size={14} />
                 <i className="side__initial" aria-hidden>{b.name.trim().slice(0, 1).toUpperCase()}</i>
                 <span>{b.name}</span>
-                <em>{b.columns?.length ?? 0}</em>
               </button>
             </li>
           ))}
         </ul>
       </div>
       <SnapshotInfo />
+      <button className="side__toggle" onClick={onToggle} aria-expanded={!narrow}
+        aria-label={narrow ? "Развернуть панель" : "Свернуть панель"} title={narrow ? "Развернуть панель" : "Свернуть панель"}>
+        <Icon name="panel" />
+        <span>Свернуть панель</span>
+      </button>
       {creating && <NewBoardDialog onClose={() => setCreating(false)} />}
     </aside>
   );
 }
 
 function SnapshotInfo() {
-  const { snapshots } = useStore();
+  const { snapshots, lastUpload } = useStore();
   const last = snapshots[0];
   if (!last) return <div className="side__foot">Данных пока нет. Загрузите JSON-выгрузку из ITSM.</div>;
+  const d = lastUpload ?? last;
   return (
     <div className="side__foot">
       <div>
-        Загрузок: {snapshots.length}, последняя {relTime(last.uploadedAt)}
+        Снимок {relTime(last.uploadedAt)}, {last.count} {plural(last.count, "инцидент", "инцидента", "инцидентов")}
       </div>
-      <div className="side__file" title={last.filename}>
-        {last.filename}
+      <div className="side__delta">
+        <b className="d-new">+{d.created ?? 0}</b> новых · <b>{d.changed ?? 0}</b> изм. · <b>{d.disappeared ?? 0}</b> пропало
       </div>
+      <div className="side__file" title={last.filename}>{last.filename}</div>
     </div>
   );
 }
@@ -222,35 +216,20 @@ export function NewBoardDialog({ onClose }: { onClose: () => void }) {
 function TopBar() {
   const s = useStore();
   const input = useRef<HTMLInputElement>(null);
-  const last = s.lastUpload;
-  const snap = s.snapshots[0];
   return (
     <header className="top">
-      <div className="top__status">
-        {snap ? (
-          <>
-            <span>
-              Снимок {relTime(snap.uploadedAt)}, {snap.count} {plural(snap.count, "инцидент", "инцидента", "инцидентов")}
-            </span>
-            {(last ?? snap) && (
-              <span className="top__delta">
-                <b className="d-new">+{(last ?? snap).created ?? 0}</b> новых
-                <b className="d-chg">{(last ?? snap).changed ?? 0}</b> изменено
-                <b className="d-gone">{(last ?? snap).disappeared ?? 0}</b> пропало
-              </span>
-            )}
-          </>
-        ) : (
-          <span className="muted">Снимков нет</span>
-        )}
+      <Link href="/" className="top__brand">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="top__logo" src="/brand/logo.svg" alt="МТС" width={40} height={40} />
+        <span>Инциденты в фокусе</span>
+      </Link>
+      <div className="top__actions">
         {s.ai?.enabled && (s.ai.running || s.ai.queuedUploads > 0) && (
           <span className="chip chip--ai" title="Языковая модель анализирует новые и изменённые инциденты">
             <span className="ai-dot" aria-hidden />
             ИИ анализирует{s.ai.total ? `: ${s.ai.done ?? 0} из ${s.ai.total}` : "…"}
           </span>
         )}
-      </div>
-      <div className="top__actions">
         <Assistant />
         <input
           ref={input}
@@ -263,13 +242,12 @@ function TopBar() {
             e.target.value = "";
           }}
         />
-        <button className="btn btn--primary" onClick={() => input.current?.click()} disabled={s.uploading}>
-          <Icon name="upload" />
+        <button className="btn btn--primary btn--pill" onClick={() => input.current?.click()} disabled={s.uploading}>
           {s.uploading ? "Загружаю…" : "Загрузить JSON"}
         </button>
         <Link href="/alerts" className="bell" aria-label={`Оповещения по инцидентам в колонках: ${s.activeAlerts}`}
           title="Оповещения по инцидентам, которые сейчас лежат в колонках">
-          <Icon name="bell" size={18} />
+          <Icon name="bell" size={30} />
           {s.activeAlerts > 0 && <b>{s.activeAlerts > 99 ? "99+" : s.activeAlerts}</b>}
         </Link>
       </div>

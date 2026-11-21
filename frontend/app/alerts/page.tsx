@@ -28,16 +28,16 @@ export default function AlertsPage() {
       )}
       <ul className="alert-list">
         {items?.map((a) => (
-          <li key={a.id} className={`al al--${a.level} ${a.inColumn ? "" : "is-gone"}`}>
+          <li key={a.id} className={`al al--${a.level} ${a.inColumn ? "" : "is-gone"}`}
+            title={a.inColumn ? "Инцидент сейчас в колонке" : "Инцидент уже не в колонке"}>
             <span className="al__lvl">{LEVEL_LABEL[a.level]}</span>
             <button className="al__main" onClick={() => s.openIncident(a.incidentId)}>
               <span className="mono">{a.incidentId}</span>
               <span className="al__head">{a.header}</span>
-              <span className="muted small">
+              <span className="al__meta">
                 {a.columns.join(", ") || a.column}, {fmtDate(a.createdAt)}
               </span>
             </button>
-            <span className="muted small">{a.inColumn ? "Сейчас в колонке" : "Уже не в колонке"}</span>
           </li>
         ))}
       </ul>

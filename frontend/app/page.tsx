@@ -113,9 +113,10 @@ export default function BoardPage() {
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
           <SortableContext items={layout.columns.map((c) => c.id)} strategy={horizontalListSortingStrategy}>
             <div className="columns">
-              {layout.columns.map((c) => (
+              {layout.columns.map((c, i) => (
                 <ColumnView
                   key={c.id}
+                  index={i}
                   column={c}
                   onEdit={() => setEditing(c)}
                   onToggle={() => toggleCollapse(c)}

@@ -70,8 +70,8 @@ export function IncidentDrawer({ id }: { id: string }) {
           <p className="drawer__desc">{String(data.description ?? data.shortDescription ?? "")}</p>
 
           <div className="drawer__actions">
-            <a className="btn btn--ghost" href={d.itsmUrl} target="_blank" rel="noreferrer">
-              <Icon name="external" /> Открыть в ITSM
+            <a className="btn btn--primary" href={d.itsmUrl} target="_blank" rel="noreferrer">
+              Открыть в ITSM
             </a>
             {s.settings?.aiAvailable && (
               <button className="btn btn--ghost" onClick={() => askAssistant(`Кому отдать ${id}?`)}
@@ -265,7 +265,7 @@ function AiBlock({ ai }: { ai: NonNullable<IncidentDetail["ai"]> }) {
               <button className="link-btn mono" onClick={() => s.openIncident(x.id)}>
                 {x.id}
               </button>{" "}
-              <span className="chip">{x.relation === "same" ? (x.resolved ? "Повтор" : "Дубль") : "Связанный симптом"}</span>
+              <span className="ai-rel">{x.relation === "same" ? (x.resolved ? "Повтор" : "Дубль") : "Связанный симптом"}</span>
               <p>{x.explanation}</p>
             </li>
           ))}

@@ -8,12 +8,23 @@ import { useStore } from "@/lib/store";
 import { fmtDuration, fmtValue, LEVEL_LABEL } from "@/lib/format";
 import { Icon } from "./Icon";
 
+// Цвета колонок по макету: красный, фиолетовый, оранжевый, графит — по порядку на доске.
+// Цвет, который координатор выбрал сам, сохраняется; заменяются только старые цвета по умолчанию.
+const DESIGN_COLORS = ["#ff0032", "#3d14ff", "#ff8a1f", "#2b2d33"];
+const DEFAULT_COLORS = new Set(["#ff0032", "#f57c00", "#0070e5", "#8b7cf6"]);
+
+export function columnColor(color: string, index: number) {
+  return DEFAULT_COLORS.has((color || "").toLowerCase()) ? DESIGN_COLORS[index % DESIGN_COLORS.length] : color;
+}
+
 export function ColumnView({
   column,
+  index = 0,
   onEdit,
   onToggle,
 }: {
   column: LayoutColumn;
+  index?: number;
   onEdit: () => void;
   onToggle: () => void;
 }) {
@@ -22,7 +33,7 @@ export function ColumnView({
   const style = {
     transform: CSS.Translate.toString(transform),
     transition,
-    "--col": column.color,
+    "--col": columnColor(column.color, index),
     ...(width && !column.collapsed ? { flexBasis: width } : {}),
   } as React.CSSProperties;
 
@@ -41,25 +52,21 @@ export function ColumnView({
     <section ref={setNodeRef} style={style} className={`col col--${column.level} ${isDragging ? "is-dragging" : ""}`}
       aria-label={`${column.name}: ${column.total}`}>
       <header className="col__head">
-        <button className="col__grip" {...attributes} {...listeners} aria-label="Перетащить колонку">
+        <button className="col__grip" {...attributes} {...listeners} aria-label="Перетащить колонку" title="Перетащить колонку">
           <Icon name="grip" size={14} />
         </button>
-        <h2 className="col__name" title={column.name}>{column.name}</h2>
-        <span className="col__count">{column.total}</span>
+        <h2 className="col__name" title={`${column.name}: ${column.total}`}>{column.name}</h2>
         <span className="grow" />
-        {column.alert !== "off" && (
-          <span className="col__alert" title={column.alert === "sound" ? "Оповещение: окно и звук" : "Оповещение: окно"}>
-            <Icon name={column.alert === "sound" ? "volume" : "bell"} size={13} />
-          </span>
-        )}
-        <button className="icon-btn" onClick={onEdit} aria-label="Настроить колонку" title="Настроить колонку">
-          <Icon name="edit" size={14} />
+        <button className="col__icon" onClick={onEdit} aria-label="Настроить колонку" title="Настроить колонку">
+          <Icon name="edit" size={20} />
         </button>
-        <button className="icon-btn" onClick={onToggle} aria-label="Свернуть колонку" title="Свернуть">
-          <Icon name="collapse" size={14} />
+        <button className="col__icon" onClick={onToggle} aria-label="Свернуть колонку" title="Свернуть">
+          <Icon name="chevronLeft" size={22} />
         </button>
       </header>
-      <div className="col__level">{LEVEL_LABEL[column.level]}</div>
+      <div className="col__level" title={column.alert === "off" ? "Без оповещения" : column.alert === "sound" ? "Оповещение: окно и звук" : "Оповещение: окно"}>
+        {LEVEL_LABEL[column.level].toLowerCase()}
+      </div>
       {column.ruleErrors.length > 0 && (
         <div className="col__error" role="alert">
           <Icon name="warning" size={14} />
@@ -151,7 +158,6 @@ export function Card({ card, fields }: { card: CardData; fields: string[] }) {
   return (
     <div className="card-wrap">
     <article className={`card ${members.length ? "card--wave" : ""}`}>
-      <Fuse pct={card.deadlineLeftPct} overdue={card.overdue} />
       <button className="card__open" onClick={() => s.openIncident(card.id)} aria-label={`Открыть ${card.id}`}>
         <div className="card__top">
           <span className="mono card__id">{card.id}</span>

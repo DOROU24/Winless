@@ -1,7 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="МТС">
-  <!-- Заглушка фирменного знака: красный квадрат с надписью МТС.
-       Замените этот файл официальным логотипом из брендбука МТС (тот же путь: public/brand/logo.svg). -->
-  <rect width="64" height="64" rx="14" fill="#FF0032"/>
-  <ellipse cx="32" cy="24" rx="9" ry="11" fill="#FFFFFF"/>
-  <text x="32" y="52" text-anchor="middle" font-family="Onest, Arial, sans-serif" font-size="15" font-weight="700" fill="#FFFFFF" letter-spacing="0.5">МТС</text>
+  <!-- Знак в стиле макета: красный квадрат и буквы М, Т, С по углам.
+       Официальный логотип из брендбука МТС можно положить по этому же пути. -->
+  <rect width="64" height="64" fill="#FF0032"/>
+  <g fill="#FFFFFF" font-family="Inter, Arial, sans-serif" font-weight="700" font-size="20">
+    <text x="7" y="23">М</text>
+    <text x="38" y="23">Т</text>
+    <text x="40" y="56">С</text>
+  </g>
 </svg>
