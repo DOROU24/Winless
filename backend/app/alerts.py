@@ -70,6 +70,36 @@ def evaluate_alerts(s: Session, ctx: EvalContext | None = None) -> list[Alert]:
     return created
 
 
+def baseline(s: Session, board_ids: list[int] | None = None, column_ids: list[int] | None = None,
+             ctx: EvalContext | None = None) -> None:
+    """Молча запоминает, какие инциденты сейчас лежат в колонках с оповещением, не создавая оповещений.
+
+    Вызывается, когда колонки появляются или меняется то, что влияет на раскладку: новая доска, шаблон, копия,
+    новая колонка, правка правила, режим доски, виртуальное «сейчас». Иначе все подходящие инциденты считались бы
+    «впервые попавшими в колонку» и пришли бы оповещения по старым данным. Оповещение приходит, только когда
+    инцидент попадает в колонку позже: после новой загрузки JSON или когда подошёл срок.
+    """
+    ctx = ctx or build_context(s)
+    reg = registry(ctx)
+    q = select(Board)
+    if board_ids is not None:
+        q = q.where(Board.id.in_(board_ids))
+    incidents = None
+    for b in s.execute(q).scalars():
+        cols = board_columns(s, b.id)
+        targets = [c for c in cols if c.alert != "off" and (column_ids is None or c.id in column_ids)]
+        if not targets:
+            continue
+        if incidents is None:
+            incidents = load_incidents(s)
+        placed = place(b, cols, incidents, reg, ctx)
+        for c in targets:
+            s.execute(delete(AlertMembership).where(AlertMembership.column_id == c.id))
+            for inc in placed[c.id]:
+                s.add(AlertMembership(column_id=c.id, incident_id=inc.id))
+    s.flush()
+
+
 def _memberships(s: Session) -> set[tuple[int, str]]:
     return {(m.column_id, m.incident_id) for m in s.execute(select(AlertMembership)).scalars()}
 

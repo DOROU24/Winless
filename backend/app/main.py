@@ -235,6 +235,8 @@ def board_from_template(body: FromTemplate, s: Session = DB):
         err(400, f"Нет шаблона «{body.template}»")
     b = create_board_from_template(s, body.template, body.name)
     set_setting(s, "active_board_id", b.id)
+    s.flush()
+    alerts_mod.baseline(s, board_ids=[b.id])
     s.commit()
     return board_dict(b, board_columns(s, b.id))
 
@@ -263,6 +265,9 @@ def patch_board(board_id: int, body: BoardBody, s: Session = DB):
         for i, cid in enumerate(body.columnOrder):
             if cid in cols:
                 cols[cid].position = i
+    if body.mode or body.hideDisappeared is not None or body.columnOrder:
+        s.flush()
+        alerts_mod.baseline(s, board_ids=[b.id])  # раскладка поменялась не из-за новых данных
     s.commit()
     return board_dict(b, board_columns(s, b.id))
 
@@ -288,6 +293,8 @@ def dup_board(board_id: int, s: Session = DB):
     b = s.get(Board, board_id) or err(404, "Доска не найдена")
     nb = duplicate_board(s, b)
     set_setting(s, "active_board_id", nb.id)
+    s.flush()
+    alerts_mod.baseline(s, board_ids=[nb.id])
     s.commit()
     return board_dict(nb, board_columns(s, nb.id))
 
@@ -304,6 +311,8 @@ def reset_board(board_id: int, body: FromTemplate, s: Session = DB):
     b.mode, b.template = t["mode"], body.template
     from .llm.adapter import is_configured
     fill_board(s, b, body.template, is_configured())
+    s.flush()
+    alerts_mod.baseline(s, board_ids=[b.id])
     s.commit()
     return board_dict(b, board_columns(s, b.id))
 
@@ -394,6 +403,8 @@ def create_column(board_id: int, body: ColumnBody, s: Session = DB):
     if body.color is None:
         c.color = PALETTE[c.level]
     s.add(c)
+    s.flush()
+    alerts_mod.baseline(s, board_ids=[b.id], column_ids=[c.id])
     s.commit()
     return column_dict(c)
 
@@ -406,6 +417,10 @@ def patch_column(board_id: int, column_id: int, body: ColumnBody, s: Session = D
     _apply_column(c, body, s, body.model_fields_set)
     if c.alert == "off":
         s.execute(delete(AlertMembership).where(AlertMembership.column_id == c.id))
+    if body.model_fields_set & {"rule", "alert", "position"}:
+        s.flush()
+        # в режиме «только в первой» правило одной колонки меняет состав следующих, поэтому вся доска
+        alerts_mod.baseline(s, board_ids=[board_id])
     s.commit()
     return column_dict(c)
 
@@ -417,6 +432,8 @@ def delete_column(board_id: int, column_id: int, s: Session = DB):
         err(404, "Колонка не найдена")
     s.execute(delete(AlertMembership).where(AlertMembership.column_id == c.id))
     s.delete(c)
+    s.flush()
+    alerts_mod.baseline(s, board_ids=[board_id])
     s.commit()
     return {"ok": True}
 
@@ -654,5 +671,8 @@ def patch_settings(body: SettingsBody, s: Session = DB):
         set_setting(s, "active_board_id", body.activeBoardId)
     if body.teams is not None:
         set_setting(s, "teams", [t for t in body.teams if (t.get("team") or "").strip()])
+    if body.virtualNowOff or body.virtualNow:
+        s.flush()
+        alerts_mod.baseline(s)  # сдвиг «сейчас» — настройка просмотра, а не новые данные
     s.commit()
     return _settings(s)

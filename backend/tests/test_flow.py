@@ -223,13 +223,13 @@ def test_alert_repeat_while_in_column(client):
     from app.db import Alert, SessionLocal
     ids = demo_ids()
     upload(client, "00_history.json")
-    upload(client, "01_now.json")
     set_now(client)
     b = client.post("/api/boards", json={"name": "Повторы"}).json()
     col = client.post(f"/api/boards/{b['id']}/columns", json={
         "name": "Новые критические", "rule": {"op": "and", "children": [
             {"field": "priorityId", "cmp": "eq", "value": 4}, {"field": "calc.isNew", "cmp": "is_true"}]},
         "alert": "popup", "repeatMin": 5}).json()
+    upload(client, "01_now.json")  # оповещения приходят из-за новых данных
     client.get("/api/alerts/due")  # первый показ всех оповещений
 
     def rewind():
@@ -247,7 +247,7 @@ def test_alert_repeat_while_in_column(client):
     upload(client, "02_new_critical.json")  # c1 больше не новый и выходит из колонки
     rewind()
     assert ids["c1"] not in due_here()
-    c1_alert = [a for a in client.get("/api/alerts").json() if a["incidentId"] == ids["c1"] and a["column"] == "Новые критические"]
+    c1_alert = [a for a in client.get("/api/alerts").json() if a["incidentId"] == ids["c1"] and "Новые критические" in a["columns"]]
     assert c1_alert and c1_alert[0]["inColumn"] is False
 
 
@@ -322,3 +322,27 @@ def test_performance_5000(client):
     t = time.perf_counter()
     client.get(f"/api/boards/{b['id']}/layout")
     assert time.perf_counter() - t < 3.0  # с запасом на медленные машины CI
+
+
+def test_new_board_does_not_realert(client):
+    """Регресс: новая доска / колонка без новой загрузки не шлёт оповещения по уже известным инцидентам."""
+    upload(client, "00_history.json")
+    upload(client, "01_now.json")
+    set_now(client)
+    client.get("/api/alerts/due")
+    before = len(client.get("/api/alerts").json())
+    for tpl in ("focus", "mts"):
+        client.post("/api/boards/from-template", json={"template": tpl})
+    b = client.post("/api/boards", json={"name": "Своя"}).json()
+    c = client.post(f"/api/boards/{b['id']}/columns", json={
+        "name": "Все критические", "rule": {"field": "priorityId", "cmp": "eq", "value": 4}, "alert": "sound"}).json()
+    dup = client.post(f"/api/boards/{b['id']}/duplicate").json()
+    client.patch(f"/api/boards/{b['id']}/columns/{c['id']}", json={"rule": {"field": "priorityId", "cmp": "gte", "value": 3}})
+    client.patch(f"/api/boards/{dup['id']}", json={"mode": "first"})
+    client.patch("/api/settings", json={"virtualNow": "2026-11-21T09:30:00Z"})
+    due = client.get("/api/alerts/due").json()["due"]
+    assert due == [], [a["column"] for a in due]
+    assert len(client.get("/api/alerts").json()) == before
+    # а новая загрузка с новым критическим по-прежнему оповещает, в том числе на новых досках
+    r = upload(client, "02_new_critical.json")
+    assert r["newAlerts"] >= 1
