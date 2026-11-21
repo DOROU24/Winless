@@ -44,7 +44,7 @@ export function ColumnView({
         <button className="col__grip" {...attributes} {...listeners} aria-label="Перетащить колонку">
           <Icon name="grip" size={14} />
         </button>
-        <h2 className="col__name">{column.name}</h2>
+        <h2 className="col__name" title={column.name}>{column.name}</h2>
         <span className="col__count">{column.total}</span>
         <span className="grow" />
         {column.alert !== "off" && (
