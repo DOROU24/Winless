@@ -15,12 +15,14 @@ export default function SettingsPage() {
   const [rules, setRules] = useState<LinkRule[]>([]);
   const [teams, setTeams] = useState<{ team: string; scope: string }[]>([]);
   const [confirmReset, setConfirmReset] = useState<string | null>(null);
+  const [minSimilar, setMinSimilar] = useState(3);
 
   const load = async () => {
     const [x, r] = await Promise.all([api.get<Settings>("/api/settings"), api.get<LinkRule[]>("/api/link-rules")]);
     setSt(x);
     setTmpl(x.itsmUrlTemplate);
     setTeams(x.teams);
+    setMinSimilar(x.assistantMinSimilar ?? 3);
     setRules(r);
   };
   useEffect(() => {
@@ -85,6 +87,25 @@ export default function SettingsPage() {
         <div className="row">
           <input className="grow" value={tmpl} onChange={(e) => setTmpl(e.target.value)} placeholder="https://itsm.example/incident/{id}" />
           <button className="btn" onClick={saveTmpl}>Сохранить</button>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>Помощник: подсказка команды</h2>
+        <p className="muted">
+          Медиану времени решения по команде помощник показывает, только если у неё набралось столько похожих решённых
+          инцидентов. Меньше — пишет «мало данных».
+        </p>
+        <div className="row">
+          <label className="row">
+            <span>Минимум похожих</span>
+            <input type="number" min={1} max={50} value={minSimilar} style={{ width: 80 }}
+              onChange={(e) => setMinSimilar(Number(e.target.value) || 1)} />
+          </label>
+          <button className="btn" onClick={async () => {
+            await api.patch("/api/settings", { assistantMinSimilar: minSimilar });
+            s.toast("Сохранено");
+          }}>Сохранить</button>
         </div>
       </section>
 

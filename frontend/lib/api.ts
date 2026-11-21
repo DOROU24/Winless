@@ -202,6 +202,7 @@ export interface Settings {
   activeBoardId: number | null;
   teams: { team: string; scope: string }[];
   aiAvailable: boolean;
+  assistantMinSimilar: number;
   now: string;
 }
 

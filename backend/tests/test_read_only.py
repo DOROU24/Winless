@@ -65,6 +65,12 @@ def sample_body(method: str, path: str, ctx: dict) -> dict:
         return {"name": "Своё 2"}
     if path.startswith("/api/boards/") and path.count("/") == 3 and method == "PATCH":
         return {"name": "Переименована", "mode": "all", "wallLayout": {"scale": 1.2, "tiles": {}}}
+    if path == "/api/assistant/apply":
+        return {"proposal": {"kind": "create_column", "boardId": ctx["board"],
+                             "column": {"name": "От помощника", "rule": {"field": "priorityId", "cmp": "eq", "value": 4},
+                                        "alert": "sound"}}}
+    if path == "/api/assistant/chat":
+        return {"messages": [{"role": "user", "content": "Что изменилось?"}]}
     if path == "/api/settings":
         return {"itsmUrlTemplate": "https://itsm.example/{id}"}
     return {}

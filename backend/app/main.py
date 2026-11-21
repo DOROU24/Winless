@@ -787,17 +787,82 @@ def graph(link_type: str | None = None, source: str | None = None, active_only: 
     return {"nodes": node_list, "edges": edges}
 
 
+# ---- помощник координатора ------------------------------------------------------------------
+
+class AssistantChat(BaseModel):
+    messages: list[dict]
+    boardId: int | None = None
+    incidentId: str | None = None
+
+
+@app.post("/api/assistant/chat")
+def assistant_chat(body: AssistantChat, s: Session = DB):
+    from . import assistant
+    from .llm.adapter import LLMError, is_configured
+    if not is_configured():
+        err(400, "Помощнику нужна языковая модель: задайте LLM_API_KEY в .env")
+    try:
+        return assistant.chat(s, body.messages, body.boardId, body.incidentId)
+    except LLMError as e:
+        err(502, str(e))
+    finally:
+        s.rollback()  # помощник только читает; на всякий случай ничего не оставляем в сессии
+
+
+class ApplyBody(BaseModel):
+    proposal: dict
+
+
+def _column_body(spec: dict) -> ColumnBody:
+    kw = {k: spec[k] for k in ("name", "rule", "level", "alert", "repeatMin", "sortField", "sortDir", "limit",
+                               "groupSimilar") if k in spec}
+    if "repeatMin" in kw and not kw["repeatMin"]:
+        kw.pop("repeatMin")
+        kw["noRepeat"] = True
+    if "limit" in kw and not kw["limit"]:
+        kw.pop("limit")
+        kw["noLimit"] = True
+    return ColumnBody(**kw)
+
+
+@app.post("/api/assistant/apply")
+def assistant_apply(body: ApplyBody, s: Session = DB):
+    """Применить предложение помощника. Меняются только настройки отображения; правило проверяется заново."""
+    p = body.proposal
+    kind = p.get("kind")
+    if kind == "create_column":
+        col = create_column(int(p.get("boardId") or 0), _column_body(p.get("column") or {}), s)
+        return {"ok": True, "boardId": col["boardId"], "columnId": col["id"]}
+    if kind == "update_column":
+        col = patch_column(int(p.get("boardId") or 0), int(p.get("columnId") or 0), _column_body(p.get("column") or {}), s)
+        return {"ok": True, "boardId": col["boardId"], "columnId": col["id"]}
+    if kind == "create_board":
+        spec = p.get("board") or {}
+        reg = registry(s)
+        for i, c in enumerate(spec.get("columns") or []):  # проверяем всё до того, как что-то создать
+            errors = validate(c.get("rule"), reg)
+            if errors:
+                err(422, f"Колонка {i + 1}: правило содержит ошибки", errors)
+        b = create_board(BoardBody(name=spec.get("name") or "Новая доска", mode=spec.get("mode") or "all"), s)
+        for c in spec.get("columns") or []:
+            create_column(b["id"], _column_body(c), s)
+        return {"ok": True, "boardId": b["id"]}
+    err(400, f"Неизвестное предложение «{kind}»")
+
+
 # ---- настройки ----------------------------------------------------------------------------------
 
 class SettingsBody(BaseModel):
     itsmUrlTemplate: str | None = None
     activeBoardId: int | None = None
     teams: list[dict] | None = None
+    assistantMinSimilar: int | None = None
 
 
 def _settings(s: Session):
     return {"itsmUrlTemplate": get_setting(s, "itsm_url_template"),
             "activeBoardId": get_setting(s, "active_board_id"), "teams": get_setting(s, "teams", []),
+            "assistantMinSimilar": get_setting(s, "assistant_min_similar", 3),
             "aiAvailable": __import__("app.llm.adapter", fromlist=["x"]).is_configured(),
             "now": build_context(s).now.isoformat()}
 
@@ -815,6 +880,8 @@ def patch_settings(body: SettingsBody, s: Session = DB):
         if s.get(Board, body.activeBoardId) is None:
             err(404, "Доска не найдена")
         set_setting(s, "active_board_id", body.activeBoardId)
+    if body.assistantMinSimilar is not None:
+        set_setting(s, "assistant_min_similar", max(1, min(50, body.assistantMinSimilar)))
     if body.teams is not None:
         set_setting(s, "teams", [t for t in body.teams if (t.get("team") or "").strip()])
     s.commit()

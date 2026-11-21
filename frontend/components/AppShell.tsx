@@ -7,6 +7,7 @@ import { api, type Board } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { LEVEL_LABEL, plural, relTime } from "@/lib/format";
 import { Icon } from "./Icon";
+import { Assistant } from "./Assistant";
 import { IncidentDrawer } from "./IncidentDrawer";
 import { Modal } from "./Modal";
 
@@ -235,6 +236,7 @@ function TopBar() {
         )}
       </div>
       <div className="top__actions">
+        <Assistant />
         <input
           ref={input}
           type="file"

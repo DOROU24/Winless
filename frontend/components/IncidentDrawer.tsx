@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type IncidentDetail, type LinkItem } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { fmtDate, fmtValue, LEVEL_COLOR } from "@/lib/format";
+import { askAssistant } from "./Assistant";
 import { Icon } from "./Icon";
 
 const KEY_CALC = [
@@ -72,6 +73,12 @@ export function IncidentDrawer({ id }: { id: string }) {
             <a className="btn btn--ghost" href={d.itsmUrl} target="_blank" rel="noreferrer">
               <Icon name="external" /> Открыть в ITSM
             </a>
+            {s.settings?.aiAvailable && (
+              <button className="btn btn--ghost" onClick={() => askAssistant(`Кому отдать ${id}?`)}
+                title="Помощник сравнит команды по похожим инцидентам и текущей очереди. Только совет, ничего не назначает">
+                <Icon name="spark" /> Кому отдать?
+              </button>
+            )}
           </div>
 
           <section className="sect">

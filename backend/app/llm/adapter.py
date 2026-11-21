@@ -150,3 +150,64 @@ def validate_schema(data, schema: dict, path="$") -> None:
     if isinstance(data, list) and "items" in schema:
         for i, x in enumerate(data):
             validate_schema(x, schema["items"], f"{path}[{i}]")
+
+
+# ---- диалог с инструментами (помощник координатора) -------------------------------------------
+
+def run_tools(system: str, history: list[dict], tools: list[dict], call_tool, max_steps: int = 8) -> dict:
+    """Диалог, в котором модель сама вызывает инструменты.
+
+    history — [{"role": "user"|"assistant", "content": str}], tools — [{"name", "description", "parameters"}],
+    call_tool(name, args) -> объект с результатом (уходит модели как JSON).
+    Возвращает {"text": итоговый ответ, "steps": [{"tool", "args"}]}.
+    """
+    if not is_configured():
+        raise LLMError("Языковая модель не подключена: задайте LLM_API_KEY")
+    prov, key = provider(), os.environ["LLM_API_KEY"]
+    steps: list[dict] = []
+
+    def run(name, args):
+        steps.append({"tool": name, "args": args})
+        try:
+            out = call_tool(name, args)
+        except Exception as e:  # ошибка инструмента уходит модели, чтобы она исправила запрос
+            log.warning("инструмент %s: %s", name, e)
+            out = {"error": str(e)}
+        return json.dumps(out, ensure_ascii=False, default=str)[:24000]
+
+    if prov == "anthropic":
+        base = os.environ.get("LLM_BASE_URL", "https://api.anthropic.com")
+        msgs = [{"role": m["role"], "content": m["content"]} for m in history]
+        spec = [{"name": t["name"], "description": t["description"], "input_schema": t["parameters"]} for t in tools]
+        for _ in range(max_steps):
+            resp = _post(f"{base}/v1/messages", {"x-api-key": key, "anthropic-version": "2023-06-01"}, {
+                "model": model(), "max_tokens": 3000, "system": system, "tools": spec, "messages": msgs,
+            }, timeout=120)
+            blocks = resp.get("content", [])
+            uses = [b for b in blocks if b.get("type") == "tool_use"]
+            if not uses:
+                return {"text": "".join(b.get("text", "") for b in blocks if b.get("type") == "text"), "steps": steps}
+            msgs.append({"role": "assistant", "content": blocks})
+            msgs.append({"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": b["id"], "content": run(b["name"], b.get("input") or {})}
+                for b in uses]})
+    else:
+        base = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
+        msgs = [{"role": "system", "content": system}] + [{"role": m["role"], "content": m["content"]} for m in history]
+        spec = [{"type": "function", "function": t} for t in tools]
+        for _ in range(max_steps):
+            resp = _post(f"{base}/chat/completions", {"authorization": f"Bearer {key}"}, {
+                "model": model(), "temperature": 0, "messages": msgs, "tools": spec,
+            }, timeout=120)
+            msg = resp["choices"][0]["message"]
+            calls = msg.get("tool_calls") or []
+            if not calls:
+                return {"text": msg.get("content") or "", "steps": steps}
+            msgs.append({"role": "assistant", "content": msg.get("content"), "tool_calls": calls})
+            for c in calls:
+                try:
+                    args = json.loads(c["function"].get("arguments") or "{}")
+                except ValueError:
+                    args = {}
+                msgs.append({"role": "tool", "tool_call_id": c["id"], "content": run(c["function"]["name"], args)})
+    raise LLMError("Помощник не уложился в лимит шагов: сформулируйте вопрос проще")
