@@ -16,7 +16,7 @@ const GAP_PX = 16;
 
 function defaultTile(c: LayoutColumn): WallTile {
   const critical = c.level === "critical";
-  return { x: 0, y: 0, w: 4, h: critical ? 8 : 3, hidden: false, showCards: critical, maxCards: 6 };
+  return { x: 0, y: 0, w: 4, h: critical ? 8 : 6, hidden: false, showCards: true, maxCards: 6 };
 }
 
 /** Раскладка по умолчанию: по три плитки в ряд, ряды друг под другом. */
@@ -146,8 +146,8 @@ export default function WallPage() {
         <div className="wall__right">
           {/* кнопка всегда на месте и стоит слева от часов, чтобы их не загораживать */}
           {!editing && (
-            <button className="wall-edit" onClick={() => setEditing(true)}>
-              <Icon name="settings" size={16} /> Настроить экран
+            <button className="wall-edit" onClick={() => setEditing(true)} aria-label="Настроить экран" title="Настроить экран">
+              <Icon name="settings" size={18} />
             </button>
           )}
           {wall.showClock && <span className="wall__clock">{clock}</span>}
@@ -157,7 +157,7 @@ export default function WallPage() {
       <WallGrid editing={editing} scale={scale}>
         {visible.map((c) => (
           <Tile key={c.id} column={c} tile={wall.tiles[c.id]} editing={editing} scale={scale}
-            onChange={(patch) => updateTile(c.id, patch)} />
+            onChange={(patch) => updateTile(c.id, patch)} openIncident={s.openIncident} />
         ))}
       </WallGrid>
       {visible.length === 0 && <p className="muted wall__empty">Все колонки скрыты. Откройте настройку экрана и верните их</p>}
@@ -174,12 +174,13 @@ function WallGrid({ children, editing, scale }: { children: React.ReactNode; edi
   );
 }
 
-function Tile({ column: c, tile, editing, scale, onChange }: {
+function Tile({ column: c, tile, editing, scale, onChange, openIncident }: {
   column: LayoutColumn;
   tile: WallTile;
   editing: boolean;
   scale: number;
   onChange: (patch: Partial<WallTile>) => void;
+  openIncident: (id: string) => void;
 }) {
   const ref = useRef<HTMLElement>(null);
   const [dragging, setDragging] = useState<null | "move" | "resize">(null);
@@ -227,12 +228,12 @@ function Tile({ column: c, tile, editing, scale, onChange }: {
   };
 
   // все задачи колонки; если не помещаются в плитку, список листается колёсиком или пальцем
-  const cards = tile.showCards ? c.cards : [];
+  const cards = c.cards;
 
   return (
     <section
       ref={ref}
-      className={`wtile wtile--${c.level} ${tile.showCards ? "has-cards" : "is-counter"} ${dragging ? "is-dragging" : ""}`}
+      className={`wtile wtile--${c.level} has-cards ${dragging ? "is-dragging" : ""}`}
       style={{ gridColumn: `${tile.x + 1} / span ${tile.w}`, gridRow: `${tile.y + 1} / span ${tile.h}`, "--col": c.color } as React.CSSProperties}
       tabIndex={editing ? 0 : undefined}
       onKeyDown={onKey}
@@ -241,18 +242,17 @@ function Tile({ column: c, tile, editing, scale, onChange }: {
       <header className="wtile__head" onPointerDown={startDrag("move")}>
         {editing && <Icon name="grip" size={16} className="wtile__grip" />}
         <h2>{c.name}</h2>
-        {tile.showCards && <strong className="wtile__count">{c.total}</strong>}
+        <strong className="wtile__count">{c.total}</strong>
       </header>
 
-      {!tile.showCards && <strong className="wtile__big">{c.total}</strong>}
-
-      {tile.showCards && (
+      {(
         <ul className="wtile__cards" tabIndex={0} aria-label={`Задачи колонки «${c.name}»`}
           onPointerDown={(e) => e.stopPropagation()}>
           {cards.map((k) => (
             <li key={k.id} className="wcard">
               <Fuse pct={k.deadlineLeftPct} overdue={k.overdue} />
-              <div>
+              <button className="wcard__open" onClick={() => !editing && openIncident(k.id)} disabled={editing}
+                aria-label={`Открыть ${k.id}`}>
                 <span className="mono">{k.id}</span>
                 <p>{k.header}</p>
                 {k.deadlineLeftMin !== null && (
@@ -260,7 +260,7 @@ function Tile({ column: c, tile, editing, scale, onChange }: {
                     {k.overdue ? `просрочен на ${fmtDuration(-k.deadlineLeftMin)}` : `до срока ${fmtDuration(k.deadlineLeftMin)}`}
                   </em>
                 )}
-              </div>
+              </button>
             </li>
           ))}
           {c.total === 0 && <li className="wtile__empty">Пусто</li>}
@@ -272,10 +272,6 @@ function Tile({ column: c, tile, editing, scale, onChange }: {
           <button className="icon-btn" onClick={() => onChange({ hidden: true })} title="Скрыть с экрана" aria-label={`Скрыть ${c.name}`}>
             <Icon name="eye" size={14} />
           </button>
-          <div className="seg seg--sm">
-            <button className={!tile.showCards ? "is-on" : ""} onClick={() => onChange({ showCards: false })}>Счётчик</button>
-            <button className={tile.showCards ? "is-on" : ""} onClick={() => onChange({ showCards: true })}>Карточки</button>
-          </div>
         </div>
       )}
       {editing && <span className="wtile__resize" onPointerDown={startDrag("resize")} aria-hidden title="Потяните, чтобы изменить размер" />}

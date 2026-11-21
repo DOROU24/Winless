@@ -153,16 +153,34 @@ def test_catalog_rules_on_demo(client):
     assert ids["priority_ups"] in preset_matches(client, 8)
     upload(client, "05_complaints_growth.json")
     presets = {p["id"]: p for p in client.get("/api/presets").json()}
-    assert 11 not in presets and presets[12]["noData"] is True  # правило 11 убрано из каталога
+    assert presets[11]["name"].startswith("Повтор") and presets[11]["noData"] is True  # без ключа ИИ — «нет данных»
 
 
-def test_preset_11_removed(client):
-    """Правило 11 убрано из каталога и из шаблона «Фокус внимания»."""
+def test_catalog_numbering_has_no_gaps(client):
+    """Правило «Низкий приоритет, а жалобы растут» убрано; номера в каталоге идут подряд 1–15."""
     from app.templates import PRESETS, TEMPLATES
-    assert 11 not in {p["id"] for p in PRESETS}
-    assert 11 not in {p["id"] for p in client.get("/api/presets").json()}
-    check = [c for c in TEMPLATES["focus"]["columns"] if c["name"] == "Проверить"][0]
-    assert 11 not in check["presets"]
+    ids = [p["id"] for p in PRESETS]
+    assert ids == list(range(1, 16))
+    assert not any("жалобы" in p["name"].lower() for p in PRESETS)
+    assert [p["id"] for p in client.get("/api/presets").json() if not p["custom"]] == ids
+    focus = {c["name"]: c for c in TEMPLATES["focus"]["columns"]}
+    assert focus["Проверить"]["presets"] == [9, 10] and focus["Проверить"]["ai_presets"] == [13]
+    assert focus["Повторы и дубли"]["ai_presets"] == [11, 12, 14] and focus["Нужно передать"]["ai_presets"] == [15]
+
+
+def test_column_preset_marks_renumbered_once(client):
+    """Пометки у старых колонок сдвигаются один раз: 11 удаляется, 12–16 становятся 11–15."""
+    from app.db import Column, SessionLocal, set_setting
+    from app.templates import seed
+    b = client.get("/api/boards").json()["boards"][0]
+    with SessionLocal() as s:
+        s.add(Column(board_id=b["id"], position=50, name="Старая", rule=None, card_fields=["id"], preset_ids=[9, 11, 12, 16]))
+        set_setting(s, "presets_renumbered_v1", None)
+        s.commit()
+        seed(s)
+        seed(s)  # второй запуск ничего не сдвигает
+        col = s.query(Column).filter(Column.name == "Старая").one()
+        assert col.preset_ids == [9, 11, 15]
 
 def test_board_crud_layout_and_modes(client):
     upload(client, "00_history.json")

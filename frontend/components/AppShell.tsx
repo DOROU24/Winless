@@ -13,7 +13,6 @@ import { Modal } from "./Modal";
 const NAV = [
   { href: "/", label: "Доска", icon: "board" },
   { href: "/graph", label: "Граф связей", icon: "graph" },
-  { href: "/alerts", label: "Оповещения", icon: "bell" },
   { href: "/settings", label: "Настройки", icon: "settings" },
 ];
 
@@ -59,6 +58,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return (
       <>
         {children}
+        {s.openIncidentId && <IncidentDrawer id={s.openIncidentId} />}
         <Popups />
       </>
     );
@@ -98,17 +98,13 @@ function Sidebar() {
       <div className="side__brand">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img className="side__logo" src="/brand/logo.svg" alt="МТС" width={32} height={32} />
-        <span>
-          Пульт координатора
-          <small>Массовые инциденты</small>
-        </span>
+        <span>Пульт координатора</span>
       </div>
       <nav className="side__nav" aria-label="Разделы">
         {NAV.map((n) => (
           <Link key={n.href} href={n.href} className={`side__link ${path === n.href ? "is-active" : ""}`}>
             <Icon name={n.icon} />
             <span>{n.label}</span>
-            {n.href === "/alerts" && s.activeAlerts > 0 && <b className="side__count">{s.activeAlerts}</b>}
           </Link>
         ))}
         <a href="/wall" target="_blank" rel="noreferrer" className="side__link">

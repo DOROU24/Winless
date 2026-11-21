@@ -74,22 +74,21 @@ PRESETS = [
     dict(id=10, name="Исследование без срока", origin="наш",
          description="Разбор причин идёт без срока и может длиться бесконечно.",
          rule=AND(C("stateId", "eq", 20), C("calc.noDeadline", "is_true")), level="info", alert="off"),
-    # Правило 11 («Низкий приоритет, а жалобы растут») убрано из каталога по решению команды.
     # ---- этап 2 ----
-    dict(id=12, name="Повтор: такая проблема уже была", origin="МТС + наш", stage=2,
+    dict(id=11, name="Повтор: такая проблема уже была", origin="МТС + наш", stage=2,
          description="ИИ нашёл решённые инциденты с той же проблемой.",
          rule=AND(C("ai.similarPastCount", "gte", 1), C("calc.isActive", "is_true")), level="elevated", alert="popup"),
-    dict(id=13, name="Несколько одинаковых инцидентов сразу", origin="МТС + наш", stage=2,
+    dict(id=12, name="Несколько одинаковых инцидентов сразу", origin="МТС + наш", stage=2,
          description="Сейчас открыто несколько инцидентов про одну и ту же проблему.",
          rule=C("ai.similarOpenCount", "gte", 2), level="elevated", alert="popup"),
-    dict(id=14, name="Отписка в решении", origin="МТС", stage=2,
+    dict(id=13, name="Отписка в решении", origin="МТС", stage=2,
          description="Текст решения не объясняет, что сделали и почему.",
          rule=C("ai.weakSolution", "is_true"), level="info", alert="off"),
-    dict(id=15, name="Отписка в решении и повтор", origin="МТС", stage=2,
+    dict(id=14, name="Отписка в решении и повтор", origin="МТС", stage=2,
          description="Решение — отписка, и проблема уже повторялась: причина, скорее всего, не устранена.",
          rule=AND(C("ai.weakSolution", "is_true"), C("ai.similarPastCount", "gte", 1)), level="elevated",
          alert="popup"),
-    dict(id=16, name="Непонятно, какой команде отдать", origin="МТС", stage=2,
+    dict(id=15, name="Непонятно, какой команде отдать", origin="МТС", stage=2,
          description="Инцидент на координаторах, и ИИ предлагает команду по похожим случаям.",
          rule=AND(C("assignedGroupName", "eq", COORD), C("ai.suggestedTeam", "not_empty")), level="elevated",
          alert="off"),
@@ -103,11 +102,11 @@ TEMPLATES = {
         "description": "Пять колонок из каталога готовых правил: что срочно, что передать, что буксует.",
         "columns": [
             {"name": "Срочно", "presets": [1, 3, 5], "sort": ("calc.deadlineLeftPct", "asc")},
-            {"name": "Нужно передать", "presets": [2], "ai_presets": [16], "sort": ("calc.ageMin", "desc")},
+            {"name": "Нужно передать", "presets": [2], "ai_presets": [15], "sort": ("calc.ageMin", "desc")},
             {"name": "Срок", "presets": [4], "sort": ("calc.deadlineLeftMin", "asc")},
-            {"name": "Повторы и дубли", "presets": [], "ai_presets": [12, 13, 15], "sort": ("calc.ageMin", "desc")},
+            {"name": "Повторы и дубли", "presets": [], "ai_presets": [11, 12, 14], "sort": ("calc.ageMin", "desc")},
             {"name": "Решение буксует", "presets": [6, 7, 8], "sort": ("calc.ageMin", "desc")},
-            {"name": "Проверить", "presets": [9, 10], "ai_presets": [14], "sort": ("submitDate", "desc")},
+            {"name": "Проверить", "presets": [9, 10], "ai_presets": [13], "sort": ("submitDate", "desc")},
         ],
     },
     "mts": {
@@ -224,12 +223,25 @@ def seed_fields(s: Session) -> None:
             s.add(FieldCatalog(name=name, type=typ, labels=BASE_LABELS.get(name, {}), values=BASE_VALUES.get(name, [])))
 
 
+def _renumber_column_presets(s: Session) -> None:
+    """Однократно: правило 11 убрали, правила ИИ сдвинулись с 12–16 на 11–15. Обновляем пометки у колонок,
+    чтобы они не указывали на чужие номера. Сами правила колонок скопированы в колонку и не меняются."""
+    if get_setting(s, "presets_renumbered_v1"):
+        return
+    for c in s.execute(select(Column)).scalars():
+        ids = [x - 1 if 12 <= x <= 16 else x for x in (c.preset_ids or []) if x != 11]
+        if ids != (c.preset_ids or []):
+            c.preset_ids = ids
+    set_setting(s, "presets_renumbered_v1", True)
+
+
 def seed(s: Session) -> None:
     """Значения по умолчанию при первом запуске. Повторно ничего не перезаписывает."""
     seed_fields(s)
     # Каталог готовых правил всегда пересоздаётся из кода: в интерфейсе он не редактируется, а правило,
     # добавленное в колонку, копируется в неё и дальше живёт там.
     s.execute(delete(RulePreset).where(RulePreset.custom.is_not(True)))  # свои правила пользователя не трогаем
+    _renumber_column_presets(s)
     s.flush()
     for p in PRESETS:
         s.add(RulePreset(stage=p.get("stage", 1), repeat_min=p.get("repeat_min"),
