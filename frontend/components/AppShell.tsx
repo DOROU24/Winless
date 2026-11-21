@@ -231,6 +231,12 @@ function TopBar() {
         ) : (
           <span className="muted">Снимков нет</span>
         )}
+        {s.ai?.enabled && (s.ai.running || s.ai.queuedUploads > 0) && (
+          <span className="chip chip--ai" title="Языковая модель анализирует новые и изменённые инциденты">
+            <span className="ai-dot" aria-hidden />
+            ИИ анализирует{s.ai.total ? `: ${s.ai.done ?? 0} из ${s.ai.total}` : "…"}
+          </span>
+        )}
         {s.settings?.virtualNow && (
           <Link href="/settings" className="chip chip--warn" title="Виртуальное «сейчас» включено в настройках">
             <Icon name="clock" size={13} /> Сейчас: {new Date(s.settings.virtualNow).toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}

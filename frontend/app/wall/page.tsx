@@ -49,9 +49,7 @@ export default function WallPage() {
   const [wall, setWall] = useState<WallLayout | null>(null);
   const [editing, setEditing] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const [showEditBtn, setShowEditBtn] = useState(false);
   const [clock, setClock] = useState("");
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!s.activeBoardId) return;
@@ -68,13 +66,6 @@ export default function WallPage() {
     const t = setInterval(tick, 10000);
     return () => clearInterval(t);
   }, []);
-
-  // кнопка настройки появляется при движении мыши и прячется через 3 секунды
-  const onMove = () => {
-    setShowEditBtn(true);
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setShowEditBtn(false), 3000);
-  };
 
   const update = useCallback((patch: Partial<WallLayout>) => {
     setWall((w) => (w ? { ...w, ...patch } : w));
@@ -114,7 +105,7 @@ export default function WallPage() {
   const hidden = layout.columns.filter((c) => wall.tiles[c.id]?.hidden);
 
   return (
-    <div className={`wall ${editing ? "is-editing" : ""}`} onMouseMove={onMove} style={{ "--wall-scale": scale } as React.CSSProperties}>
+    <div className={`wall ${editing ? "is-editing" : ""}`} style={{ "--wall-scale": scale } as React.CSSProperties}>
       {editing && (
         <div className="wall-bar" role="toolbar" aria-label="Настройка экрана">
           <strong>Настройка экрана</strong>
@@ -150,18 +141,18 @@ export default function WallPage() {
         </div>
       )}
 
-      {(wall.showTitle || wall.showClock) && (
-        <header className="wall__head">
-          {wall.showTitle ? <h1>{layout.board.name}</h1> : <span />}
+      <header className="wall__head">
+        {wall.showTitle ? <h1>{layout.board.name}</h1> : <span />}
+        <div className="wall__right">
+          {/* кнопка всегда на месте и стоит слева от часов, чтобы их не загораживать */}
+          {!editing && (
+            <button className="wall-edit" onClick={() => setEditing(true)}>
+              <Icon name="settings" size={16} /> Настроить экран
+            </button>
+          )}
           {wall.showClock && <span className="wall__clock">{clock}</span>}
-        </header>
-      )}
-
-      {!editing && (
-        <button className={`wall-edit ${showEditBtn ? "is-shown" : ""}`} onClick={() => setEditing(true)}>
-          <Icon name="settings" size={16} /> Настроить экран
-        </button>
-      )}
+        </div>
+      </header>
 
       <WallGrid editing={editing} scale={scale}>
         {visible.map((c) => (

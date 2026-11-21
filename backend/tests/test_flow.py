@@ -402,3 +402,125 @@ def test_wall_layout(client):
     dup = client.post(f"/api/boards/{b['id']}/duplicate").json()
     assert dup["wallLayout"] is None
     assert client.patch(f"/api/boards/{b['id']}", json={"wallLayout": None}).json()["wallLayout"] is None
+
+
+def test_ai_pipeline_async_with_fake_model(client, monkeypatch):
+    """Анализ ИИ идёт в фоне после загрузки; результаты пишутся в ai.* и связи «ИИ». Модель подменена."""
+    import time
+    from app.llm import adapter, pipeline
+    ids = demo_ids()
+    monkeypatch.setenv("LLM_API_KEY", "sk-test")
+    calls = []
+
+    def fake_ask(system, user, schema):
+        req = json.loads(user)
+        calls.append(req["incident"]["id"])
+        cands = req["candidates"]
+        same = [{"id": c["id"], "relation": "same", "explanation": "та же проблема"} for c in cands
+                if c["header"] == req["incident"]["header"]]
+        sol = req["incident"]["solution"] or ""
+        return {"similar": same, "solution": {"weak": ("Перезагрузил" in sol or "Само" in sol) if sol else None,
+                                              "reason": "проверка"},
+                "team": {"name": None, "reason": "нет данных"}, "facts": [], "assumptions": []}
+
+    monkeypatch.setattr(pipeline, "ask_json", fake_ask)
+    assert adapter.is_configured()
+    upload(client, "00_history.json")
+    for f in ("01_now.json", "02_new_critical.json", "03_reassign_and_resolve.json", "04_reopen_again.json",
+              "05_complaints_growth.json"):
+        upload(client, f)
+    t = time.time()
+    r = upload(client, "06_disk_full_again.json")
+    assert r["ai"] == {"enabled": True, "queued": True} and time.time() - t < 5  # загрузка не ждёт модель
+    for _ in range(100):  # ждём, пока фоновый поток обработает все загрузки
+        v = client.get("/api/alerts/due").json()["ai"]
+        if not v["running"] and v["queuedUploads"] == 0 and ids["disk_new"] in calls:
+            break
+        time.sleep(0.1)
+    card = client.get(f"/api/incidents/{ids['disk_new']}").json()
+    assert card["calc"]["ai.similarPastCount"] == 5
+    chain = client.get(f"/api/incidents/{ids['disk_chain'][0]}").json()
+    assert chain["calc"]["ai.weakSolution"] is True
+    ai_links = [l for l in client.get("/api/links").json() if l["source"] == "ai" and ids["disk_new"] in (l["src"], l["dst"])]
+    assert len(ai_links) == 5 and all(l["type"] == "repeat" for l in ai_links)
+    # повторная загрузка того же файла модель не вызывает: текст не менялся
+    n = len(calls)
+    upload(client, "06_disk_full_again.json")
+    time.sleep(0.5)
+    assert len(calls) == n
+
+
+def test_llm_adapter_retries_transient_errors(monkeypatch):
+    """Обрыв связи и 503 повторяются, неверный ключ — нет."""
+    import io
+    import urllib.error
+    from app.llm import adapter
+    monkeypatch.setenv("LLM_API_KEY", "sk-test")
+    seq = []
+
+    def fake_urlopen(req, timeout=0):
+        seq.append(1)
+        if len(seq) == 1:
+            raise urllib.error.URLError("SSL: UNEXPECTED_EOF_WHILE_READING")
+        if len(seq) == 2:
+            raise urllib.error.HTTPError(req.full_url, 503, "busy", {}, io.BytesIO(b"{}"))
+        body = json.dumps({"choices": [{"message": {"content": json.dumps({"ok": True})}}]}).encode()
+        return io.BytesIO(body)
+
+    class Ctx(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(adapter.urllib.request, "urlopen",
+                        lambda req, timeout=0: Ctx(fake_urlopen(req, timeout).getvalue()))
+    monkeypatch.setattr(adapter.time, "sleep", lambda s: None)
+    assert adapter.ask_json("s", "u", {"type": "object", "properties": {"ok": {"type": "boolean"}}}) == {"ok": True}
+    assert len(seq) == 3
+    seq.clear()
+
+    def unauthorized(req, timeout=0):
+        seq.append(1)
+        raise urllib.error.HTTPError(req.full_url, 401, "no", {}, io.BytesIO(b'{"error": {"message": "bad key"}}'))
+
+    monkeypatch.setattr(adapter.urllib.request, "urlopen", unauthorized)
+    try:
+        adapter.ask_json("s", "u", {"type": "object"})
+        assert False, "должна быть ошибка"
+    except adapter.LLMError as e:
+        assert "401" in str(e) and len(seq) == 1
+
+
+def test_ai_pair_found_from_both_sides_shown_once(client):
+    from app.db import Link, SessionLocal
+    upload(client, "01_now.json")
+    ids = demo_ids()
+    with SessionLocal() as s:
+        s.add(Link(src=ids["c1"], dst=ids["c2"], type="double", directed=False, source="ai", note="A→B"))
+        s.add(Link(src=ids["c2"], dst=ids["c1"], type="repeat", directed=False, source="ai", note="B→A"))
+        s.commit()
+    g = client.get("/api/graph?source=ai").json()
+    assert len(g["edges"]) == 1 and g["edges"][0]["type"] == "repeat"  # разные типы с двух сторон — одна связь
+    card = client.get(f"/api/incidents/{ids['c1']}").json()["links"]
+    assert len([l for l in card["outgoing"] + card["incoming"] if l["source"] == "ai"]) == 1
+
+
+def test_preview_respects_first_column_mode(client):
+    """Регресс: предпросмотр «подходит 2», а в колонке 1 — второй уже в колонке выше (режим «только в первой»)."""
+    upload(client, "01_now.json")
+    set_now(client)
+    b = client.post("/api/boards", json={"name": "Порядок", "mode": "first"}).json()
+    a = client.post(f"/api/boards/{b['id']}/columns", json={"name": "Критические", "rule": {"field": "priorityId", "cmp": "eq", "value": 4}}).json()
+    rule_b = {"field": "priorityId", "cmp": "gte", "value": 3}
+    c = client.post(f"/api/boards/{b['id']}/columns", json={"name": "Высокий и выше", "rule": rule_b}).json()
+    p = client.post("/api/rules/preview", json={"rule": rule_b, "boardId": b["id"], "columnId": c["id"], "limit": 100}).json()
+    lay = {x["id"]: x for x in client.get(f"/api/boards/{b['id']}/layout").json()["columns"]}
+    assert p["takenAbove"] == 3 and p["inColumn"] == p["count"] - 3
+    assert p["inColumn"] == lay[c["id"]]["total"]  # предпросмотр совпадает с колонкой на доске
+    assert sum(1 for i in p["items"] if i["takenBy"] == "Критические") == 3
+    # первая колонка ничего «выше» не имеет; без доски — старое поведение
+    pa = client.post("/api/rules/preview", json={"rule": a["rule"], "boardId": b["id"], "columnId": a["id"]}).json()
+    assert pa["takenAbove"] == 0
+    assert client.post("/api/rules/preview", json={"rule": rule_b}).json()["takenAbove"] == 0
+    # новая колонка (без id) встаёт в конец: всё, что выше, уже занято
+    pn = client.post("/api/rules/preview", json={"rule": rule_b, "boardId": b["id"]}).json()
+    assert pn["inColumn"] == 0

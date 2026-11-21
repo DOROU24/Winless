@@ -116,6 +116,9 @@ select[multiple] { min-height: 70px; }
 .seg--sm button { padding: 2px 10px; min-height: 26px; font-size: 12.5px; }
 
 .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 999px; background: var(--raise); color: var(--text-2); font-size: 12px; }
+.chip--ai { background: var(--info-soft); color: var(--info-ink); }
+.ai-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--info); animation: ai-pulse 1.2s ease-in-out infinite; }
+@keyframes ai-pulse { 50% { opacity: 0.3; } }
 .chip--warn { background: var(--elev-soft); color: var(--elev-ink); }
 .pill { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 12.5px; color: var(--text-2); }
 .pill.is-on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-text); }
@@ -321,6 +324,8 @@ select[multiple] { min-height: 70px; }
 .pv__list button { display: grid; gap: 2px; text-align: left; width: 100%; padding: 8px 10px; border-radius: var(--radius-s); background: var(--panel); border: 1px solid var(--line-soft); }
 .pv__list button:hover { background: var(--panel-2); }
 .pv__head { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv__list li.is-taken button { opacity: 0.6; }
+.pv__taken-by { font-size: 11.5px; color: var(--elev-ink); }
 .pv__why { font-size: 11.5px; color: var(--text-2); }
 .swatches { display: flex; gap: 6px; padding-top: 6px; }
 .swatch { width: 24px; height: 24px; border-radius: 50%; box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.12); }
@@ -476,7 +481,7 @@ select[multiple] { min-height: 70px; }
 /* стена: плитки колонок на сетке 12 × N, раскладка настраивается */
 .wall { --wall-scale: 1; min-height: 100vh; padding: calc(24px * var(--wall-scale)) calc(32px * var(--wall-scale)); background: var(--bg); position: relative; }
 .wall.is-editing { padding-top: 88px; user-select: none; }
-.wall__head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: calc(20px * var(--wall-scale)); }
+.wall__head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: calc(20px * var(--wall-scale)); }
 .wall__head h1 { font-size: calc(34px * var(--wall-scale)); }
 .wall__clock { font-size: calc(34px * var(--wall-scale)); font-weight: 600; color: var(--text-2); }
 .wall__empty { text-align: center; padding: 48px; }
@@ -505,9 +510,9 @@ select[multiple] { min-height: 70px; }
 .wcard em.is-over { color: var(--crit-ink); }
 .wcard--more { padding: 10px 14px; color: var(--muted); font-size: calc(16px * var(--wall-scale)); }
 /* режим настройки экрана */
-.wall-edit { position: fixed; top: 16px; right: 16px; z-index: 30; display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: var(--radius-s);
-  background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--text-2); opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
-.wall-edit.is-shown, .wall-edit:focus-visible { opacity: 1; pointer-events: auto; }
+.wall__right { display: flex; align-items: center; gap: calc(16px * var(--wall-scale)); }
+.wall-edit { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: var(--radius-s);
+  background: var(--panel); border: 1px solid var(--line); color: var(--text-2); font-size: 14px; transition: color 0.15s ease, border-color 0.15s ease; }
 .wall-edit:hover { color: var(--text); border-color: var(--line-strong); }
 .wall-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 40; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 12px 24px;
   background: var(--panel); border-bottom: 1px solid var(--line); box-shadow: 0 2px 8px rgba(29, 32, 35, 0.06); font-size: 13px; }

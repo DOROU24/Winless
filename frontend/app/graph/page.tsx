@@ -25,6 +25,15 @@ export default function GraphPage() {
 
   const board = s.boards.find((b) => b.id === boardId);
 
+  // Сохранённые позиции узлов и подпись данных: граф перерисовывается, только когда связи правда изменились.
+  // Раньше он пересоздавался со случайной раскладкой при каждом обновлении данных (раз в 30 с, а пока
+  // работает ИИ — каждые 4 с), поэтому картинка «прыгала».
+  const positions = useRef<Record<string, { x: number; y: number }>>({});
+  const signature = useRef("");
+  const view = useRef<{ zoom: number; pan: { x: number; y: number } } | null>(null);
+  const filtersKey = `${boardId}|${columnId}|${linkType}|${source}|${activeOnly}`;
+  const lastFilters = useRef(filtersKey);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -36,20 +45,54 @@ export default function GraphPage() {
       if (activeOnly) qs.set("active_only", "true");
       const g = await api.get<{ nodes: GNode[]; edges: GEdge[] }>(`/api/graph?${qs}`);
       if (cancelled || !box.current) return;
+
+      const filtersChanged = lastFilters.current !== filtersKey;
+      lastFilters.current = filtersKey;
+      const sig = JSON.stringify([
+        g.nodes.map((n) => [n.id, n.level, n.disappeared, n.stateId]).sort(),
+        g.edges.map((e) => [e.id, e.type, e.source]).sort(),
+      ]);
+      if (!filtersChanged && sig === signature.current && cy.current) return; // ничего не изменилось — не трогаем
+      signature.current = sig;
       setStats({ nodes: g.nodes.length, edges: g.edges.length });
+
+      if (filtersChanged) {
+        positions.current = {}; // другой набор узлов — раскладываем заново
+        view.current = null;
+      } else if (cy.current) {
+        cy.current.nodes().forEach((n) => {
+          positions.current[n.id()] = { ...n.position() };
+        });
+        view.current = { zoom: cy.current.zoom(), pan: { ...cy.current.pan() } };
+      }
+
       const cytoscape = (await import("cytoscape")).default;
+      if (cancelled || !box.current) return;
       cy.current?.destroy();
       const deg: Record<string, number> = {};
       g.edges.forEach((e) => {
         deg[e.src] = (deg[e.src] ?? 0) + 1;
         deg[e.dst] = (deg[e.dst] ?? 0) + 1;
       });
+      const known = g.nodes.length > 0 && g.nodes.every((n) => positions.current[n.id]);
+      const anyKnown = g.nodes.some((n) => positions.current[n.id]);
+      const anyKnownNew = anyKnown && !known;
+      if (anyKnown && !known) {
+        // новый узел ставим рядом с уже размещённым соседом, чтобы раскладка не начиналась с нуля
+        for (const n of g.nodes) {
+          if (positions.current[n.id]) continue;
+          const e = g.edges.find((x) => (x.src === n.id && positions.current[x.dst]) || (x.dst === n.id && positions.current[x.src]));
+          const base = e ? positions.current[e.src === n.id ? e.dst : e.src] : Object.values(positions.current)[0];
+          positions.current[n.id] = { x: base.x + (Math.random() - 0.5) * 60, y: base.y + (Math.random() - 0.5) * 60 };
+        }
+      }
       const inst = cytoscape({
         container: box.current,
         elements: [
           ...g.nodes.map((n) => ({
             data: { ...n, label: n.id.replace(/^INC0*/, ""), color: n.level ? LEVEL_HEX[n.level] : NEUTRAL, size: 14 + Math.min(18, (deg[n.id] ?? 0) * 3) },
             classes: n.disappeared ? "gone" : "",
+            position: positions.current[n.id],
           })),
           ...g.edges.map((e) => ({ data: { id: `e${e.id}`, source: e.src, target: e.dst, kind: e.source, directed: e.directed ? 1 : 0 } })),
         ],
@@ -62,8 +105,21 @@ export default function GraphPage() {
           { selector: "edge[kind = 'ai']", style: { "line-style": "dotted", width: 2, "line-color": "#12a150" } },
           { selector: "edge[directed = 1]", style: { "target-arrow-shape": "triangle", "target-arrow-color": "#626c77", "arrow-scale": 0.8 } },
         ],
-        layout: { name: "cose", animate: false, nodeRepulsion: () => 9000, idealEdgeLength: () => 60, padding: 30 } as never,
+        // все узлы уже размещались — оставляем их на местах; новые узлы — раскладка с фиксированным зерном
+        layout: (known && !anyKnownNew
+          ? { name: "preset", fit: !view.current }
+          : { name: "cose", animate: false, randomize: !anyKnown, nodeRepulsion: () => 9000, idealEdgeLength: () => 60, padding: 30 }) as never,
         wheelSensitivity: 0.3,
+      });
+      if (known && view.current) {
+        inst.zoom(view.current.zoom);
+        inst.pan(view.current.pan);
+      }
+      inst.nodes().forEach((n) => {
+        positions.current[n.id()] = { ...n.position() };
+      });
+      inst.on("dragfree", "node", (e) => {
+        positions.current[e.target.id()] = { ...e.target.position() }; // пользователь передвинул узел — запоминаем
       });
       inst.on("tap", "node", (e) => s.openIncident(e.target.id()));
       inst.on("mouseover", "node", (e) => setHover(e.target.data() as GNode));

@@ -17,7 +17,10 @@ interface Preview {
   ok: boolean;
   errors: { path: string; message: string }[];
   count: number;
-  items: { id: string; header: string; priority: string; state: string; why: string[] }[];
+  inColumn?: number;
+  takenAbove?: number;
+  mode?: "all" | "first" | null;
+  items: { id: string; header: string; priority: string; state: string; why: string[]; takenBy: string | null }[];
   nullSkipped?: number;
   unavailable?: string[];
 }
@@ -58,7 +61,9 @@ export function ColumnEditor({
   useEffect(() => {
     const t = setTimeout(async () => {
       try {
-        const p = await api.post<Preview>("/api/rules/preview", { rule: ruleNode, limit: 20 });
+        const p = await api.post<Preview>("/api/rules/preview", {
+          rule: ruleNode, limit: 20, boardId, columnId: column?.id ?? null,
+        });
         setPreview(p);
         setErrors(Object.fromEntries(p.errors.map((e) => [e.path, e.message])));
       } catch {
@@ -248,9 +253,15 @@ export function ColumnEditor({
 
         <aside className="editor__preview" aria-live="polite">
           <div className="pv__count">
-            <span>Сейчас подходит</span>
-            <strong>{preview ? preview.count : "…"}</strong>
+            <span>{preview?.takenAbove ? "Окажется в колонке" : "Сейчас подходит"}</span>
+            <strong>{preview ? (preview.takenAbove ? preview.inColumn : preview.count) : "…"}</strong>
           </div>
+          {!!preview?.takenAbove && (
+            <p className="hint-text pv__taken">
+              Под правило подходят {preview.count}, но {preview.takenAbove} уже показаны в колонках выше: на этой доске
+              инцидент попадает только в первую подходящую колонку
+            </p>
+          )}
           {preview && !preview.ok && <p className="error-text">Исправьте ошибки в правиле, чтобы увидеть предпросмотр.</p>}
           {preview?.unavailable && preview.unavailable.length > 0 && (
             <p className="hint-text">Не срабатывают без данных: {preview.unavailable.join(", ")}</p>
@@ -262,9 +273,10 @@ export function ColumnEditor({
           )}
           <ul className="pv__list">
             {preview?.items.map((i) => (
-              <li key={i.id}>
+              <li key={i.id} className={i.takenBy ? "is-taken" : ""}>
                 <button onClick={() => s.openIncident(i.id)}>
                   <span className="mono">{i.id}</span>
+                  {i.takenBy && <span className="pv__taken-by">уже в колонке «{i.takenBy}»</span>}
                   <span className="pv__head">{i.header}</span>
                   <span className="muted small">{[i.priority, i.state].filter(Boolean).join(", ")}</span>
                   {i.why.length > 0 && <span className="pv__why">{i.why.join(", ")}</span>}

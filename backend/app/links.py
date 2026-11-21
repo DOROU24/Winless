@@ -85,8 +85,14 @@ def links_for(s: Session, incident_id: str) -> dict:
     others = {l.dst if l.src == incident_id else l.src for l in rows}
     incs = {i.id: i for i in s.execute(select(Incident).where(Incident.id.in_(others))).scalars()}
     out, inc_ = [], []
+    seen: set[tuple] = set()
+    rows.sort(key=lambda l: (l.type != "repeat", l.id))  # пара от ИИ с обеих сторон: оставляем «Повтор»
     for l in rows:
         other = l.dst if l.src == incident_id else l.src
+        key = (other, l.type if l.source != "ai" else "*", l.source)
+        if not l.directed and key in seen:  # одна и та же неориентированная связь, найденная с обеих сторон
+            continue
+        seen.add(key)
         o = incs.get(other)
         d = {**link_dict(l, names), "other": other, "otherHeader": (o.data.get("header") if o else "") or "",
              "otherState": o.data.get("state") if o else None, "otherDisappeared": o.disappeared if o else None}

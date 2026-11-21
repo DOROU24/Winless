@@ -8,7 +8,7 @@ services:
       - MTS_DB_PATH=/data/data.sqlite3
       # Этап 2 (ИИ): без ключа сигналы ИИ помечены «недоступно», остальное работает
       - LLM_API_KEY=${LLM_API_KEY:-}
-      - LLM_PROVIDER=${LLM_PROVIDER:-anthropic}
+      - LLM_PROVIDER=${LLM_PROVIDER:-}  # пусто — определяется по ключу (sk-… OpenAI, sk-ant-… Anthropic)
       - LLM_MODEL=${LLM_MODEL:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
     volumes: ["dbdata:/data"]   # база переживает перезапуск контейнера

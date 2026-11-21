@@ -96,7 +96,8 @@ def make(product_idx: int, scenario: str | None = None, *, priority: int, state:
          completion: datetime | None = None, solution: str | None = None, complaints: int = 0,
          header: str | None = None, reason: str = "Нет", **extra) -> dict:
     p_name, service, service_id, scenarios, p_team, master = PRODUCTS[product_idx]
-    scenario = scenario or rnd.choice(scenarios)
+    # «Диск» берётся только явно: иначе фоновые инциденты добавляют лишние повторы к цепочке «диск заполнен»
+    scenario = scenario or rnd.choice([x for x in scenarios if x != "Диск"])
     h, desc = PROBLEMS[scenario]
     if deadline == "auto":
         deadline = submit + timedelta(hours=WINDOW_H[priority])

@@ -7,18 +7,23 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import queue
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from ..db import AiResult, Incident, IncidentEvent, Link, get_setting, utcnow
-from ..fields import EvalContext
+from ..db import AiResult, Incident, IncidentEvent, Link, SessionLocal, get_setting, utcnow
 from .adapter import ask_json, is_configured
 
 log = logging.getLogger("llm")
 TEXT_FIELDS = ("header", "shortDescription", "description", "solution")
-MAX_PER_UPLOAD = 40
+# Сколько инцидентов одной загрузки отдавать модели (защита от расходов) и сколько запросов слать параллельно.
+MAX_PER_UPLOAD = int(os.environ.get("AI_MAX_PER_UPLOAD", "300"))
+CONCURRENCY = int(os.environ.get("AI_CONCURRENCY", "4"))
 MAX_CANDIDATES = 20
 WORD_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9]{4,}")
 
@@ -91,69 +96,138 @@ def _brief(inc: Incident) -> dict:
             "resolved": _resolved(inc)}
 
 
-def analyze(s: Session, inc: Incident, pool: list[Incident]) -> dict:
+def prepare(inc: Incident, pool: list[Incident], teams: list) -> tuple[str, dict]:
+    """Запрос к модели и сведения о кандидатах. Работает с данными из базы, саму модель не вызывает."""
     cands = candidates(inc, pool)
-    teams = get_setting(s, "teams", [])
     user = json.dumps({"incident": _brief(inc), "candidates": [_brief(c) for c in cands], "teams": teams},
                       ensure_ascii=False)
-    resp = ask_json(SYSTEM, user, SCHEMA)
-    by_id = {c.id: c for c in cands}
-    same = [x for x in resp["similar"] if x["relation"] == "same" and x["id"] in by_id]
-    past = [x for x in same if _resolved(by_id[x["id"]])]
-    open_ = [x for x in same if by_id[x["id"]].data.get("stateId") in (0, 2) and not by_id[x["id"]].disappeared]
+    meta = {c.id: {"resolved": _resolved(c), "active": c.data.get("stateId") in (0, 2) and not c.disappeared}
+            for c in cands}
+    return user, meta
+
+
+def interpret(resp: dict, meta: dict) -> dict:
+    """Ответ модели → поля ai.*. Ссылки только на переданных кандидатов: чужие id отбрасываются."""
+    same = [x for x in resp["similar"] if x["relation"] == "same" and x["id"] in meta]
+    past = [x for x in same if meta[x["id"]]["resolved"]]
+    open_ = [x for x in same if meta[x["id"]]["active"]]
     return {
         "similarPastCount": len(past), "similarOpenCount": len(open_),
         "weakSolution": resp["solution"]["weak"], "weakSolutionReason": resp["solution"]["reason"],
         "suggestedTeam": resp["team"]["name"], "suggestedTeamReason": resp["team"]["reason"],
-        "similar": [{**x, "resolved": _resolved(by_id[x["id"]])} for x in resp["similar"] if x["id"] in by_id],
+        "similar": [{**x, "resolved": meta[x["id"]]["resolved"]} for x in resp["similar"] if x["id"] in meta],
         "facts": resp.get("facts", []), "assumptions": resp.get("assumptions", []),
-        "candidates": [c.id for c in cands],
+        "candidates": list(meta),
     }
 
 
-def _targets(s: Session, ctx: EvalContext) -> set[str]:
-    if ctx.latest_snapshot_id is None:
-        return set()
+def analyze(s: Session, inc: Incident, pool: list[Incident]) -> dict:
+    user, meta = prepare(inc, pool, get_setting(s, "teams", []))
+    return interpret(ask_json(SYSTEM, user, SCHEMA), meta)
+
+
+def _targets(s: Session, snapshot_id: int) -> set[str]:
     out = set()
-    for e in s.execute(select(IncidentEvent).where(IncidentEvent.snapshot_id == ctx.latest_snapshot_id)).scalars():
+    for e in s.execute(select(IncidentEvent).where(IncidentEvent.snapshot_id == snapshot_id)).scalars():
         if e.type == "created" or (e.type == "field_changed" and e.field in TEXT_FIELDS):
             out.add(e.incident_id)
     return out
 
 
-def process_after_ingest(s: Session, ctx: EvalContext) -> dict:
-    if not is_configured():
-        return {"enabled": False}
-    pool = list(s.execute(select(Incident)).scalars())
-    by_id = {i.id: i for i in pool}
-    ids = [i for i in _targets(s, ctx) if i in by_id]
-    # сначала активные, потом остальные
-    ids.sort(key=lambda i: (by_id[i].data.get("stateId") not in (0, 2), i))
-    done = errors = cached = 0
-    for iid in ids[:MAX_PER_UPLOAD]:
-        inc = by_id[iid]
-        h = text_hash(inc.data)
-        row = s.get(AiResult, iid)
-        if row is not None and row.text_hash == h and not row.error:
-            cached += 1
+def _save(s: Session, iid: str, h: str, data: dict, err: str | None) -> None:
+    row = s.get(AiResult, iid)
+    if row is None:
+        row = AiResult(incident_id=iid, text_hash=h)
+        s.add(row)
+    row.text_hash, row.data, row.error, row.updated_at = h, data, err, utcnow()
+    s.execute(delete(Link).where(Link.source == "ai", Link.src == iid))
+    for x in data.get("similar", []):
+        if x["relation"] != "same":
             continue
-        try:
-            data = analyze(s, inc, pool)
-            err = None
-        except Exception as e:  # невалидный ответ = сигнал не посчитан
-            log.exception("LLM: не удалось обработать %s", iid)
-            data, err = {}, str(e)
-            errors += 1
-        if row is None:
-            row = AiResult(incident_id=iid, text_hash=h)
-            s.add(row)
-        row.text_hash, row.data, row.error, row.updated_at = h, data, err, utcnow()
-        s.execute(delete(Link).where(Link.source == "ai", Link.src == iid))
-        for x in data.get("similar", []):
-            if x["relation"] != "same":
+        s.add(Link(src=iid, dst=x["id"], type="repeat" if x.get("resolved") else "double", directed=False,
+                   source="ai", note=x.get("explanation", "")))
+
+
+def process_snapshot(snapshot_id: int, progress: dict | None = None) -> dict:
+    """Анализ инцидентов одной загрузки: подготовка из базы, параллельные запросы к модели, запись по мере готовности."""
+    progress = progress if progress is not None else {}
+    with SessionLocal() as s:
+        pool = list(s.execute(select(Incident)).scalars())
+        by_id = {i.id: i for i in pool}
+        teams = get_setting(s, "teams", [])
+        ids = [i for i in _targets(s, snapshot_id) if i in by_id]
+        # инциденты, на которых анализ раньше упал (сбой сети, лимит), пробуем снова
+        failed = set(s.execute(select(AiResult.incident_id).where(AiResult.error.is_not(None))).scalars())
+        # и те, по которым анализа ещё не было (например, загружены до того, как появился ключ)
+        analyzed = set(s.execute(select(AiResult.incident_id)).scalars())
+        never = {i for i in by_id if i not in analyzed}
+        ids += [i for i in (failed | never) if i not in ids]
+        ids.sort(key=lambda i: (by_id[i].data.get("stateId") not in (0, 2), i))  # сначала активные
+        skipped = max(0, len(ids) - MAX_PER_UPLOAD)
+        jobs, cached = [], 0
+        for iid in ids[:MAX_PER_UPLOAD]:
+            h = text_hash(by_id[iid].data)
+            row = s.get(AiResult, iid)
+            if row is not None and row.text_hash == h and not row.error:
+                cached += 1  # текст не менялся — модель повторно не вызываем
                 continue
-            s.add(Link(src=iid, dst=x["id"], type="repeat" if x.get("resolved") else "double", directed=False,
-                       source="ai", note=x.get("explanation", "")))
-        done += 1
-    s.flush()
-    return {"enabled": True, "processed": done, "cached": cached, "errors": errors, "skipped": max(0, len(ids) - MAX_PER_UPLOAD)}
+            jobs.append((iid, h, *prepare(by_id[iid], pool, teams)))
+    progress.update(total=len(jobs), done=0, errors=0, cached=cached, skipped=skipped)
+    done = errors = 0
+    if jobs:
+        with ThreadPoolExecutor(max_workers=CONCURRENCY, thread_name_prefix="llm") as ex, SessionLocal() as s:
+            futures = {ex.submit(ask_json, SYSTEM, user, SCHEMA): (iid, h, meta) for iid, h, user, meta in jobs}
+            for fut in as_completed(futures):
+                iid, h, meta = futures[fut]
+                try:
+                    data, err = interpret(fut.result(), meta), None
+                except Exception as e:  # невалидный ответ = сигнал не посчитан, ошибка в лог
+                    log.warning("LLM: не удалось обработать %s: %s", iid, e)
+                    data, err = {}, str(e)
+                    errors += 1
+                _save(s, iid, h, data, err)
+                s.commit()  # пишем сразу: карточки обновляются по мере готовности
+                done += 1
+                progress.update(done=done, errors=errors)
+    return {"processed": done, "cached": cached, "errors": errors, "skipped": skipped}
+
+
+class AiWorker:
+    """Один фоновый поток: загрузки анализируются по очереди, загрузка файла модель не ждёт."""
+
+    def __init__(self) -> None:
+        self.tasks: queue.Queue = queue.Queue()
+        self.thread: threading.Thread | None = None
+        self.progress: dict = {}
+        self.running = False
+        self.last: dict | None = None
+
+    def enqueue(self, snapshot_id: int) -> dict:
+        if not is_configured():
+            return {"enabled": False}
+        self.tasks.put(snapshot_id)
+        if not (self.thread and self.thread.is_alive()):
+            self.thread = threading.Thread(target=self._run, name="ai-worker", daemon=True)
+            self.thread.start()
+        return {"enabled": True, "queued": True}
+
+    def view(self) -> dict:
+        return {"enabled": is_configured(), "running": self.running, "queuedUploads": self.tasks.qsize(),
+                **{k: self.progress.get(k) for k in ("total", "done", "errors")}, "last": self.last}
+
+    def _run(self) -> None:
+        while True:
+            try:
+                sid = self.tasks.get(timeout=60)
+            except queue.Empty:
+                return
+            self.running, self.progress = True, {}
+            try:
+                self.last = process_snapshot(sid, self.progress)
+            except Exception:  # noqa: BLE001 - фоновый поток не должен падать
+                log.exception("ai-worker: снимок %s", sid)
+            finally:
+                self.running = False
+
+
+worker = AiWorker()

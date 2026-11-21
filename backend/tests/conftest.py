@@ -7,7 +7,8 @@ import pytest
 
 _tmp = tempfile.mkdtemp()
 os.environ["MTS_DB_PATH"] = str(Path(_tmp) / "test.sqlite3")
-os.environ.pop("LLM_API_KEY", None)
+# Пустой ключ, а не удаление: иначе load_dotenv подхватит настоящий ключ из .env и тесты пойдут в платный API
+os.environ["LLM_API_KEY"] = ""
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 ROOT = Path(__file__).resolve().parents[2]

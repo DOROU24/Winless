@@ -14,6 +14,10 @@ from sqlalchemy.orm import Session
 from . import alerts as alerts_mod
 from .boards import (board_columns, board_dict, column_counts, column_dict, duplicate_board, incident_levels,
                      layout, load_incidents, place)
+from .env import load_dotenv
+
+load_dotenv()  # ключ модели и прочие настройки из .env (не перезаписывает переменные окружения)
+
 from .db import (utcnow, AiResult, Alert, AlertMembership, Board, Column, Incident, IncidentEvent, Link, LinkRule,
                  RulePreset, SessionLocal, Snapshot, get_session, get_setting, init_db, set_setting)
 from .fields import build_context, field_value, parse_dt, registry
@@ -30,6 +34,11 @@ async def lifespan(app: FastAPI):
     init_db()
     with SessionLocal() as s:
         seed(s)
+        # если ключ модели есть, дозапускаем анализ инцидентов без результата ИИ (загружены до появления ключа)
+        latest = s.execute(select(Snapshot.id).order_by(Snapshot.id.desc()).limit(1)).scalar()
+    if latest:
+        from .llm.pipeline import worker
+        worker.enqueue(latest)
     yield
 
 
@@ -54,15 +63,12 @@ def health(s: Session = DB):
 
 def _after_ingest(s: Session) -> dict:
     ctx = build_context(s)
-    from .llm.pipeline import process_after_ingest
-    ai_info = process_after_ingest(s, ctx)
-    ctx = build_context(s)
     n_links = recompute_auto_links(s, ctx)
     new_alerts = alerts_mod.evaluate_alerts(s, ctx)
     active_id = get_setting(s, "active_board_id")
     board = s.get(Board, active_id) if active_id else None
     counts = column_counts(s, board, ctx) if board else []
-    return {"autoLinks": n_links, "newAlerts": len(new_alerts), "columns": counts, "ai": ai_info}
+    return {"autoLinks": n_links, "newAlerts": len(new_alerts), "columns": counts}
 
 
 @app.post("/api/snapshots")
@@ -75,6 +81,9 @@ async def upload_snapshot(file: UploadFile = File(...), s: Session = DB):
         err(400, str(e))
     summary.update(_after_ingest(s))
     s.commit()
+    # Анализ ИИ идёт в фоне после сохранения: загрузка не ждёт модель, поля ai.* заполнятся по мере ответов
+    from .llm.pipeline import worker
+    summary["ai"] = worker.enqueue(summary["snapshotId"])
     return summary
 
 
@@ -155,6 +164,8 @@ def get_incident(incident_id: str, board_id: int | None = None, s: Session = DB)
 class RuleBody(BaseModel):
     rule: Any = None
     limit: int = 20
+    boardId: int | None = None   # чтобы предпросмотр учитывал режим доски и колонки выше
+    columnId: int | None = None  # None — новая колонка, встанет в конец
 
 
 @app.post("/api/rules/validate")
@@ -164,34 +175,56 @@ def rules_validate(body: RuleBody, s: Session = DB):
     return {"ok": not errors, "errors": errors}
 
 
-def _preview(s: Session, rule, limit=20, hide_disappeared=True):
+def _preview(s: Session, rule, limit=20, hide_disappeared=True, board: Board | None = None,
+             column_id: int | None = None):
     ctx = build_context(s)
     reg = registry(ctx)
     errors = validate(rule, reg)
     if errors:
         return {"ok": False, "errors": errors, "count": 0, "items": []}
+    incidents = load_incidents(s)
+    # В режиме «только в первой» инцидент, уже попавший в колонку выше, в эту колонку не попадёт.
+    # Раньше предпросмотр этого не учитывал: «подходит 2», а в колонке 1 — непонятно почему.
+    taken: dict[str, str] = {}
+    if board is not None:
+        hide_disappeared = board.hide_disappeared
+        if board.mode == "first":
+            cols = board_columns(s, board.id)
+            me = next((c for c in cols if c.id == column_id), None)
+            above = [c for c in cols if c.id != column_id and (me is None or c.position < me.position)]
+            if above:
+                placed = place(board, above, incidents, reg, ctx)
+                for c in above:
+                    for inc in placed[c.id]:
+                        taken.setdefault(inc.id, c.name)
     items = []
-    count = 0
+    count = in_column = 0
     null_hits = 0
     used = [f for f in rule_fields(rule) if f in reg]
-    for inc in load_incidents(s):
+    for inc in incidents:
         if hide_disappeared and inc.disappeared:
             continue
         if match(rule, inc, reg, ctx):
             count += 1
+            if inc.id not in taken:
+                in_column += 1
             if len(items) < limit:
                 items.append({"id": inc.id, "header": inc.data.get("header"), "priority": inc.data.get("priority"),
-                              "state": inc.data.get("state"), "why": explain(rule, inc, reg, ctx)})
+                              "state": inc.data.get("state"), "why": explain(rule, inc, reg, ctx),
+                              "takenBy": taken.get(inc.id)})
         elif any(reg[f].group != "hist" and field_value(reg, f, inc, ctx) is None for f in used):
             null_hits += 1
+    items.sort(key=lambda x: x["takenBy"] is not None)  # сначала те, что окажутся в этой колонке
     unavailable = [reg[f].label for f in used if not reg[f].available]
-    return {"ok": True, "errors": [], "count": count, "items": items, "nullSkipped": null_hits,
+    return {"ok": True, "errors": [], "count": count, "inColumn": in_column, "takenAbove": count - in_column,
+            "mode": board.mode if board else None, "items": items, "nullSkipped": null_hits,
             "unavailable": unavailable}
 
 
 @app.post("/api/rules/preview")
 def rules_preview(body: RuleBody, s: Session = DB):
-    return _preview(s, body.rule, body.limit)
+    board = s.get(Board, body.boardId) if body.boardId else None
+    return _preview(s, body.rule, body.limit, board=board, column_id=body.columnId)
 
 
 # ---- доски --------------------------------------------------------------------------------
@@ -595,7 +628,8 @@ def get_due_alerts(s: Session = DB):
     due = alerts_mod.due_alerts(s)
     active = alerts_mod.active_count(s)
     s.commit()
-    return {"due": due, "active": active}
+    from .llm.pipeline import worker
+    return {"due": due, "active": active, "ai": worker.view()}
 
 
 # ---- связи ----------------------------------------------------------------------------------
@@ -722,9 +756,17 @@ def graph(board_id: int | None = None, column_id: int | None = None, link_type: 
         return True
 
     edges, nodes = [], set()
+    seen_pairs: set[tuple] = set()
+    # ИИ может найти пару с обеих сторон и с разным типом: активный видит решённый как «Повтор»,
+    # решённый видит активный как «Дубль». Это одна связь; «Повтор» точнее, поэтому он идёт первым.
+    links.sort(key=lambda l: (l.type != "repeat", l.id))
     for l in links:
         if not (ok(l.src) and ok(l.dst)):
             continue
+        pair = (min(l.src, l.dst), max(l.src, l.dst), l.type if l.source != "ai" else "*", l.source)
+        if not l.directed and pair in seen_pairs:  # ИИ находит пару с обеих сторон — рисуем один раз
+            continue
+        seen_pairs.add(pair)
         if scope is not None and not (l.src in scope or l.dst in scope):
             continue
         edges.append(link_dict(l))
