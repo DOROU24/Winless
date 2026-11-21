@@ -74,9 +74,9 @@ export function IncidentDrawer({ id }: { id: string }) {
               Открыть в ITSM
             </a>
             {s.settings?.aiAvailable && (
-              <button className="btn btn--ghost" onClick={() => askAssistant(`Кому отдать ${id}?`)}
+              <button className="btn btn--outline" onClick={() => askAssistant(`Кому отдать ${id}?`)}
                 title="Помощник сравнит команды по похожим инцидентам и текущей очереди. Только совет, ничего не назначает">
-                <Icon name="spark" /> Кому отдать?
+                Кому отдать?
               </button>
             )}
           </div>

@@ -6,7 +6,7 @@ import { AppShell } from "@/components/AppShell";
 export const metadata: Metadata = {
   title: "Инциденты в фокусе",
   description: "Дашборд-конструктор координатора массовых инцидентов МТС",
-  icons: { icon: "/brand/logo.svg" },
+  icons: { icon: "/brand/favicon.svg" },
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#ffffff" };
