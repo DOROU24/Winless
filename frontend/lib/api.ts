@@ -93,6 +93,10 @@ export interface CardData {
   isNew: boolean;
   disappeared: boolean;
   level: Level;
+  wave?: { id: string; size: number; title: string } | null;
+  waveMembers?: CardData[];
+  priorityUnderestimated?: boolean | null;
+  overdueRisk?: boolean | null;
 }
 
 export interface LayoutColumn extends Column {
@@ -178,6 +182,7 @@ export interface IncidentDetail {
   events: IncidentEvent[];
   links: { outgoing: LinkItem[]; incoming: LinkItem[] };
   itsmUrl: string;
+  wave: { id: string; size: number; title: string; members: { id: string; header: string; state: string | null }[] } | null;
   ai: { data: Record<string, unknown>; error: string | null; updatedAt: string } | null;
 }
 

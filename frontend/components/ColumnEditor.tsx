@@ -244,8 +244,10 @@ export function ColumnEditor({
             <label className={`check ${s.settings?.aiAvailable ? "" : "is-disabled"}`}>
               <input type="checkbox" checked={groupSimilar} disabled={!s.settings?.aiAvailable} onChange={(e) => setGroupSimilar(e.target.checked)} />
               <span>
-                Схлопывать похожие открытые инциденты в одну строку
-                <small>{s.settings?.aiAvailable ? "По сигналам ИИ" : "Нужна языковая модель (этап 2)"}</small>
+                Схлопывать волну сбоя в одну карточку
+                <small>{s.settings?.aiAvailable
+                  ? "Активные инциденты, которые ИИ признал одной проблемой, показываются одной карточкой с раскрытием"
+                  : "Нужна языковая модель (этап 2)"}</small>
               </span>
             </label>
           </section>

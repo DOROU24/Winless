@@ -108,6 +108,7 @@ export function IncidentDrawer({ id }: { id: string }) {
             </dl>
           </section>
 
+          <AiSignals d={d} />
           {d.ai && <AiBlock ai={d.ai} />}
 
           <section className="sect">
@@ -186,6 +187,45 @@ function LinkList({ title, items }: { title: string; items: LinkItem[] }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+// Волна сбоя, приоритет и риск просрочки — сигналы ИИ, которые нужны координатору прямо сейчас
+function AiSignals({ d }: { d: IncidentDetail }) {
+  const s = useStore();
+  const c = d.calc;
+  const prio = c["ai.priorityUnderestimated"] === true;
+  const risk = c["ai.overdueRisk"] === true;
+  if (!d.wave && !prio && !risk) return null;
+  const P = s.fieldMap["ai.suggestedPriority"];
+  return (
+    <section className="sect sect--signals">
+      {d.wave && (
+        <div className="signal">
+          <strong>Волна сбоя: {d.wave.size} активных инцидента про одну проблему</strong>
+          <p className="muted small">«{d.wave.title}» — вероятен общий сбой, смотрите их вместе</p>
+          <ul className="signal__list">
+            {d.wave.members.filter((m) => m.id !== d.id).map((m) => (
+              <li key={m.id}>
+                <button className="link-btn mono" onClick={() => s.openIncident(m.id)}>{m.id}</button> {m.header}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {prio && (
+        <div className="signal">
+          <strong>Приоритет, похоже, занижен: по оценке ИИ — {fmtValue(P, c["ai.suggestedPriority"])}</strong>
+          {typeof c["ai.priorityReason"] === "string" && <p className="small">{c["ai.priorityReason"] as string}</p>}
+        </div>
+      )}
+      {risk && (
+        <div className="signal">
+          <strong>Риск просрочки</strong>
+          {typeof c["ai.overdueRiskReason"] === "string" && <p className="small">{c["ai.overdueRiskReason"] as string}</p>}
+        </div>
+      )}
+    </section>
   );
 }
 

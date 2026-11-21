@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db import Board, Column, Incident
-from .fields import EvalContext, FieldDef, build_context, field_value, parse_dt, registry
+from .fields import EvalContext, FieldDef, build_context, field_value, parse_dt, registry, waves
 from .rules import explain, match, validate
 
 LEVEL_RANK = {"info": 0, "elevated": 1, "critical": 2}
@@ -94,7 +94,37 @@ def card(inc: Incident, c: Column, reg, ctx, with_why=True) -> dict:
         "overdue": field_value(reg, "calc.overdue", inc, ctx),
         "isNew": inc.first_snapshot_id == ctx.latest_snapshot_id,
         "disappeared": inc.disappeared, "level": c.level,
+        "wave": _wave_brief(inc, reg, ctx),
+        "priorityUnderestimated": field_value(reg, "ai.priorityUnderestimated", inc, ctx),
+        "overdueRisk": field_value(reg, "ai.overdueRisk", inc, ctx),
     }
+
+
+def _wave_brief(inc: Incident, reg, ctx) -> dict | None:
+    fd = reg.get("ai.waveId")
+    if fd is None or not fd.available:
+        return None
+    w = waves(ctx).get(inc.id)
+    return {"id": w["id"], "size": w["size"], "title": w["title"]} if w else None
+
+
+def collapse_waves(items: list[Incident], reg, ctx) -> list[tuple[Incident, list[Incident]]]:
+    """Схлопывание волн в колонке: из каждой волны остаётся первая по сортировке карточка, остальные — под ней."""
+    fd = reg.get("ai.waveId")
+    if fd is None or not fd.available:
+        return [(i, []) for i in items]
+    wv = waves(ctx)
+    out: list[tuple[Incident, list[Incident]]] = []
+    lead: dict[str, int] = {}
+    for inc in items:
+        w = wv.get(inc.id)
+        if w and w["id"] in lead:
+            out[lead[w["id"]]][1].append(inc)
+            continue
+        if w:
+            lead[w["id"]] = len(out)
+        out.append((inc, []))
+    return out
 
 
 def layout(s: Session, board: Board, ctx: EvalContext | None = None) -> dict:
@@ -106,10 +136,18 @@ def layout(s: Session, board: Board, ctx: EvalContext | None = None) -> dict:
     out_cols = []
     for c in cols:
         items = placed[c.id]
-        shown = items if c.limit is None else items[: max(c.limit, 0)]
-        out_cols.append({**column_dict(c), "total": len(items), "hidden": len(items) - len(shown),
-                         "ruleErrors": validate(c.rule, reg),
-                         "cards": [card(i, c, reg, ctx) for i in shown]})
+        # «Схлопывать похожие»: волна сбоя — одна карточка с остальными инцидентами волны внутри
+        groups = collapse_waves(items, reg, ctx) if c.group_similar else [(i, []) for i in items]
+        shown = groups if c.limit is None else groups[: max(c.limit, 0)]
+        cards = []
+        for lead_inc, rest in shown:
+            cd = card(lead_inc, c, reg, ctx)
+            if rest:
+                cd["waveMembers"] = [card(i, c, reg, ctx) for i in rest]
+            cards.append(cd)
+        hidden = len(items) - sum(1 + len(rest) for _, rest in shown)
+        out_cols.append({**column_dict(c), "total": len(items), "hidden": hidden,
+                         "ruleErrors": validate(c.rule, reg), "cards": cards})
     return {"board": board_dict(b=board), "columns": out_cols, "now": ctx.now.isoformat(),
             "incidentCount": len(incidents)}
 

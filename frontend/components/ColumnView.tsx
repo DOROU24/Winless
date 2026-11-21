@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { CardData, LayoutColumn } from "@/lib/api";
@@ -98,9 +99,12 @@ export function Fuse({ pct, overdue }: { pct: number | null; overdue: boolean })
 
 export function Card({ card, fields }: { card: CardData; fields: string[] }) {
   const s = useStore();
+  const [open, setOpen] = useState(false);
   const shown = fields.filter((f) => f !== "id");
+  const members = card.waveMembers ?? [];
   return (
-    <article className="card">
+    <div className="card-wrap">
+    <article className={`card ${members.length ? "card--wave" : ""}`}>
       <Fuse pct={card.deadlineLeftPct} overdue={card.overdue} />
       <button className="card__open" onClick={() => s.openIncident(card.id)} aria-label={`Открыть ${card.id}`}>
         <div className="card__top">
@@ -108,6 +112,9 @@ export function Card({ card, fields }: { card: CardData; fields: string[] }) {
           {card.priorityId !== null && <span className={`prio prio--${card.priorityId}`}>{card.priority}</span>}
           {card.isNew && <span className="tag tag--new">новый</span>}
           {card.disappeared && <span className="tag">пропал</span>}
+          {card.wave && <span className="tag tag--wave" title={`Волна сбоя: «${card.wave.title}»`}>волна · {card.wave.size}</span>}
+          {card.priorityUnderestimated && <span className="tag tag--warn" title="ИИ оценивает приоритет выше текущего">приоритет занижен?</span>}
+          {card.overdueRisk && <span className="tag tag--warn" title="Похожие случаи решались дольше, чем осталось до срока">риск просрочки</span>}
         </div>
         <p className="card__title">{card.header || "Без заголовка"}</p>
         {card.deadlineLeftMin !== null && card.stateId !== null && [0, 2].includes(card.stateId) && (
@@ -137,5 +144,19 @@ export function Card({ card, fields }: { card: CardData; fields: string[] }) {
         )}
       </button>
     </article>
+    {members.length > 0 && (
+      <div className="wave">
+        <button className="wave__toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
+          <Icon name={open ? "chevronDown" : "chevron"} size={13} />
+          ещё {members.length} в этой волне
+        </button>
+        {open && (
+          <div className="wave__list">
+            {members.map((m) => <Card key={m.id} card={m} fields={fields} />)}
+          </div>
+        )}
+      </div>
+    )}
+    </div>
   );
 }

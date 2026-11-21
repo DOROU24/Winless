@@ -92,6 +92,16 @@ PRESETS = [
          description="Инцидент на координаторах, и ИИ предлагает команду по похожим случаям.",
          rule=AND(C("assignedGroupName", "eq", COORD), C("ai.suggestedTeam", "not_empty")), level="elevated",
          alert="off"),
+    dict(id=16, name="Волна сбоя: много одинаковых сразу", origin="наш", stage=2,
+         description="ИИ объединил три и больше активных инцидента в одну проблему — вероятен общий сбой.",
+         rule=C("ai.waveSize", "gte", 3), level="critical", alert="popup"),
+    dict(id=17, name="Приоритет, похоже, занижен", origin="наш", stage=2,
+         description="По масштабу из текста (сколько клиентов, деньги, жалобы) ИИ оценивает приоритет выше текущего.",
+         rule=AND(C("ai.priorityUnderestimated", "is_true"), C("calc.isActive", "is_true")), level="elevated",
+         alert="popup"),
+    dict(id=18, name="Риск просрочки", origin="наш", stage=2,
+         description="Похожие случаи решались дольше, чем осталось до срока: инцидент, скорее всего, не успеют.",
+         rule=AND(C("ai.overdueRisk", "is_true"), C("calc.isActive", "is_true")), level="elevated", alert="popup"),
 ]
 
 PALETTE = {"critical": "#ff0032", "elevated": "#f57c00", "info": "#0070e5"}
@@ -103,10 +113,11 @@ TEMPLATES = {
         "columns": [
             {"name": "Срочно", "presets": [1, 3, 5], "sort": ("calc.deadlineLeftPct", "asc")},
             {"name": "Нужно передать", "presets": [2], "ai_presets": [15], "sort": ("calc.ageMin", "desc")},
-            {"name": "Срок", "presets": [4], "sort": ("calc.deadlineLeftMin", "asc")},
-            {"name": "Повторы и дубли", "presets": [], "ai_presets": [11, 12, 14], "sort": ("calc.ageMin", "desc")},
+            {"name": "Срок", "presets": [4], "ai_presets": [18], "sort": ("calc.deadlineLeftMin", "asc")},
+            {"name": "Повторы и дубли", "presets": [], "ai_presets": [11, 12, 14, 16], "sort": ("calc.ageMin", "desc"),
+             "group_similar": True},
             {"name": "Решение буксует", "presets": [6, 7, 8], "sort": ("calc.ageMin", "desc")},
-            {"name": "Проверить", "presets": [9, 10], "ai_presets": [13], "sort": ("submitDate", "desc")},
+            {"name": "Проверить", "presets": [9, 10], "ai_presets": [13, 17], "sort": ("submitDate", "desc")},
         ],
     },
     "mts": {
@@ -170,7 +181,7 @@ def fill_board(s: Session, b: Board, key: str, ai_enabled: bool) -> None:
         s.add(Column(board_id=b.id, position=i, name=col["name"], color=PALETTE[cfg["level"]], rule=cfg["rule"],
                      sort_field=sf, sort_dir=sd, limit=None, card_fields=list(DEFAULT_CARD_FIELDS),
                      level=cfg["level"], alert=cfg["alert"], repeat_min=cfg["repeat_min"],
-                     preset_ids=cfg["preset_ids"]))
+                     preset_ids=cfg["preset_ids"], group_similar=bool(col.get("group_similar"))))
         i += 1
 
 

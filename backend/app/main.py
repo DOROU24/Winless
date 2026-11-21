@@ -154,9 +154,25 @@ def get_incident(incident_id: str, board_id: int | None = None, s: Session = DB)
         "id": inc.id, "data": inc.data, "calc": calc, "disappeared": inc.disappeared,
         "why": why, "events": [_event_dict(e, snaps) for e in events],
         "links": links_for(s, incident_id),
+        "wave": _wave_view(inc, reg, ctx),
         "itsmUrl": tmpl.replace("{id}", inc.id).replace("{sysId}", str(inc.data.get("sysId") or "")),
         "ai": ({"data": ai.data, "error": ai.error, "updatedAt": ai.updated_at.isoformat() + "Z"} if ai else None),
     }
+
+
+def _wave_view(inc: Incident, reg, ctx) -> dict | None:
+    from .fields import waves
+    if not reg["ai.waveId"].available:
+        return None
+    w = waves(ctx).get(inc.id)
+    if not w:
+        return None
+    members = []
+    for mid in w["members"]:
+        m = ctx.session.get(Incident, mid)
+        members.append({"id": mid, "header": (m.data.get("header") if m else "") or "",
+                        "state": m.data.get("state") if m else None})
+    return {"id": w["id"], "size": w["size"], "title": w["title"], "members": members}
 
 
 # ---- правила ------------------------------------------------------------------------------

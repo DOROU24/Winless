@@ -29,7 +29,7 @@ WORD_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9]{4,}")
 
 SCHEMA = {
     "type": "object",
-    "required": ["similar", "solution", "team"],
+    "required": ["similar", "solution", "team", "priority"],
     "properties": {
         "similar": {"type": "array", "items": {
             "type": "object", "required": ["id", "relation", "explanation"],
@@ -41,6 +41,8 @@ SCHEMA = {
         "team": {"type": "object", "required": ["name", "reason"],
                  "properties": {"name": {"type": ["string", "null"]}, "reason": {"type": "string"},
                                 "basedOn": {"type": "array", "items": {"type": "string"}}}},
+        "priority": {"type": "object", "required": ["suggested", "reason"],
+                     "properties": {"suggested": {"type": ["integer", "null"]}, "reason": {"type": "string"}}},
         "facts": {"type": "array", "items": {"type": "string"}},
         "assumptions": {"type": "array", "items": {"type": "string"}},
     },
@@ -52,13 +54,22 @@ SYSTEM = (
     "В similar включай только same и symptom. Оцени текст решения (solution) нового инцидента: weak=true, если это "
     "отписка («ничего не делал», «само устранилось», «перезагрузил» без объяснения, что и почему); weak=null, если "
     "решения нет. Предложи команду по похожим прошлым инцидентам и таблице команд, укажи id, на которые опираешься. "
+    "Оцени приоритет нового инцидента по шкале 1 Низкий, 2 Средний, 3 Высокий, 4 Наивысший — по масштабу и "
+    "влиянию, которые следуют из текста и полей (сколько клиентов затронуто, массовость, деньги, число жалоб "
+    "complaintsCount, срочность и влияние). В priority.suggested верни число, только если в данных есть явные "
+    "признаки масштаба; иначе null. В reason — одна фраза, на что опираешься. "
     "Отделяй факты (facts) от предположений (assumptions). Каждый вывод ссылается на конкретные id. "
     "Если похожих нет или они противоречат друг другу, так и пиши, ничего не выдумывай."
 )
 
 
+# Версия анализа: при изменении запроса к модели (новые сигналы) инциденты один раз анализируются заново.
+ANALYSIS_VERSION = "2"  # 2: оценка приоритета
+
+
 def text_hash(d: dict) -> str:
-    return hashlib.sha256(json.dumps([d.get(f) for f in TEXT_FIELDS], ensure_ascii=False).encode()).hexdigest()
+    key = [ANALYSIS_VERSION] + [d.get(f) for f in TEXT_FIELDS] + [d.get("priorityId")]
+    return hashlib.sha256(json.dumps(key, ensure_ascii=False).encode()).hexdigest()
 
 
 def _words(d: dict) -> set[str]:
@@ -91,9 +102,14 @@ def candidates(inc: Incident, pool: list[Incident]) -> list[Incident]:
 
 def _brief(inc: Incident) -> dict:
     d = inc.data
-    return {"id": inc.id, "header": d.get("header"), "description": d.get("description"), "state": d.get("state"),
-            "solution": d.get("solution"), "team": d.get("assignedGroupName"), "submitDate": d.get("submitDate"),
-            "resolved": _resolved(inc)}
+    out = {"id": inc.id, "header": d.get("header"), "description": d.get("description"), "state": d.get("state"),
+           "solution": d.get("solution"), "team": d.get("assignedGroupName"), "submitDate": d.get("submitDate"),
+           "resolved": _resolved(inc), "priority": d.get("priority"), "priorityId": d.get("priorityId"),
+           "urgency": d.get("urgency"), "impact": d.get("impact"), "product": d.get("productName"),
+           "service": d.get("service")}
+    if d.get("complaintsCount") is not None:
+        out["complaintsCount"] = d.get("complaintsCount")
+    return out
 
 
 def prepare(inc: Incident, pool: list[Incident], teams: list) -> tuple[str, dict]:
@@ -106,7 +122,7 @@ def prepare(inc: Incident, pool: list[Incident], teams: list) -> tuple[str, dict
     return user, meta
 
 
-def interpret(resp: dict, meta: dict, has_solution: bool = True) -> dict:
+def interpret(resp: dict, meta: dict, has_solution: bool = True, priority: int | None = None) -> dict:
     """Ответ модели → поля ai.*. Ссылки только на переданных кандидатов: чужие id отбрасываются.
 
     Если у инцидента нет текста решения, оценивать нечего: «отписка» пустая, что бы ни ответила модель
@@ -120,15 +136,27 @@ def interpret(resp: dict, meta: dict, has_solution: bool = True) -> dict:
         "weakSolution": resp["solution"]["weak"] if has_solution else None,
         "weakSolutionReason": resp["solution"]["reason"] if has_solution else None,
         "suggestedTeam": resp["team"]["name"], "suggestedTeamReason": resp["team"]["reason"],
+        **_priority(resp.get("priority") or {}, priority),
         "similar": [{**x, "resolved": meta[x["id"]]["resolved"]} for x in resp["similar"] if x["id"] in meta],
         "facts": resp.get("facts", []), "assumptions": resp.get("assumptions", []),
         "candidates": list(meta),
     }
 
 
+def _priority(p: dict, current: int | None) -> dict:
+    """Оценка модели → приоритет занижен, если её оценка выше текущего. Числа вне шкалы 1–4 отбрасываются."""
+    sug = p.get("suggested")
+    if not isinstance(sug, int) or isinstance(sug, bool) or not 1 <= sug <= 4:
+        sug = None
+    under = bool(sug is not None and isinstance(current, int) and sug > current)
+    return {"suggestedPriority": sug, "priorityUnderestimated": under,
+            "priorityReason": (p.get("reason") or None) if sug is not None else None}
+
+
 def analyze(s: Session, inc: Incident, pool: list[Incident]) -> dict:
     user, meta = prepare(inc, pool, get_setting(s, "teams", []))
-    return interpret(ask_json(SYSTEM, user, SCHEMA), meta, bool((inc.data.get("solution") or "").strip()))
+    return interpret(ask_json(SYSTEM, user, SCHEMA), meta, bool((inc.data.get("solution") or "").strip()),
+                     inc.data.get("priorityId"))
 
 
 def _targets(s: Session, snapshot_id: int) -> set[str]:
@@ -161,12 +189,12 @@ def process_snapshot(snapshot_id: int, progress: dict | None = None) -> dict:
         by_id = {i.id: i for i in pool}
         teams = get_setting(s, "teams", [])
         ids = [i for i in _targets(s, snapshot_id) if i in by_id]
-        # инциденты, на которых анализ раньше упал (сбой сети, лимит), пробуем снова
-        failed = set(s.execute(select(AiResult.incident_id).where(AiResult.error.is_not(None))).scalars())
-        # и те, по которым анализа ещё не было (например, загружены до того, как появился ключ)
-        analyzed = set(s.execute(select(AiResult.incident_id)).scalars())
-        never = {i for i in by_id if i not in analyzed}
-        ids += [i for i in (failed | never) if i not in ids]
+        # Ещё дозапускаем: анализ упал (сбой сети, лимит), анализа не было (загружен до появления ключа)
+        # или результат устарел (поменялся текст или версия анализа, например добавилась оценка приоритета).
+        stored = {r.incident_id: r for r in s.execute(select(AiResult)).scalars()}
+        stale = {i for i, inc in by_id.items()
+                 if i not in stored or stored[i].error or stored[i].text_hash != text_hash(inc.data)}
+        ids += sorted(i for i in stale if i not in ids)
         ids.sort(key=lambda i: (by_id[i].data.get("stateId") not in (0, 2), i))  # сначала активные
         skipped = max(0, len(ids) - MAX_PER_UPLOAD)
         jobs, cached = [], 0
@@ -177,16 +205,16 @@ def process_snapshot(snapshot_id: int, progress: dict | None = None) -> dict:
                 cached += 1  # текст не менялся — модель повторно не вызываем
                 continue
             has_solution = bool((by_id[iid].data.get("solution") or "").strip())
-            jobs.append((iid, h, has_solution, *prepare(by_id[iid], pool, teams)))
+            jobs.append((iid, h, (has_solution, by_id[iid].data.get("priorityId")), *prepare(by_id[iid], pool, teams)))
     progress.update(total=len(jobs), done=0, errors=0, cached=cached, skipped=skipped)
     done = errors = 0
     if jobs:
         with ThreadPoolExecutor(max_workers=CONCURRENCY, thread_name_prefix="llm") as ex, SessionLocal() as s:
             futures = {ex.submit(ask_json, SYSTEM, user, SCHEMA): (iid, h, sol, meta) for iid, h, sol, user, meta in jobs}
             for fut in as_completed(futures):
-                iid, h, has_solution, meta = futures[fut]
+                iid, h, (has_solution, prio), meta = futures[fut]
                 try:
-                    data, err = interpret(fut.result(), meta, has_solution), None
+                    data, err = interpret(fut.result(), meta, has_solution, prio), None
                 except Exception as e:  # невалидный ответ = сигнал не посчитан, ошибка в лог
                     log.warning("LLM: не удалось обработать %s: %s", iid, e)
                     data, err = {}, str(e)

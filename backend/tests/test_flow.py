@@ -157,15 +157,16 @@ def test_catalog_rules_on_demo(client):
 
 
 def test_catalog_numbering_has_no_gaps(client):
-    """Правило «Низкий приоритет, а жалобы растут» убрано; номера в каталоге идут подряд 1–15."""
+    """Правило «Низкий приоритет, а жалобы растут» убрано; номера в каталоге идут подряд без дыр."""
     from app.templates import PRESETS, TEMPLATES
     ids = [p["id"] for p in PRESETS]
-    assert ids == list(range(1, 16))
+    assert ids == list(range(1, len(ids) + 1)) and len(ids) == 18
     assert not any("жалобы" in p["name"].lower() for p in PRESETS)
     assert [p["id"] for p in client.get("/api/presets").json() if not p["custom"]] == ids
     focus = {c["name"]: c for c in TEMPLATES["focus"]["columns"]}
-    assert focus["Проверить"]["presets"] == [9, 10] and focus["Проверить"]["ai_presets"] == [13]
-    assert focus["Повторы и дубли"]["ai_presets"] == [11, 12, 14] and focus["Нужно передать"]["ai_presets"] == [15]
+    assert focus["Проверить"]["presets"] == [9, 10] and focus["Проверить"]["ai_presets"] == [13, 17]
+    assert focus["Повторы и дубли"]["ai_presets"] == [11, 12, 14, 16] and focus["Нужно передать"]["ai_presets"] == [15]
+    assert focus["Повторы и дубли"]["group_similar"] is True and focus["Срок"]["ai_presets"] == [18]
 
 
 def test_column_preset_marks_renumbered_once(client):
@@ -574,3 +575,108 @@ def test_time_cannot_be_changed_via_api(client):
     from app.fields import parse_dt
     now = parse_dt(client.get("/api/settings").json()["now"])
     assert abs((now - datetime.now(timezone.utc)).total_seconds()) < 60
+
+
+
+def _run_fake_ai(client, monkeypatch, files, answer):
+    """Загрузить файлы и прогнать фоновый анализ ИИ с подменённой моделью."""
+    import time
+    from app.llm import pipeline
+    monkeypatch.setenv("LLM_API_KEY", "sk-test")
+    monkeypatch.setattr(pipeline, "ask_json", answer)
+    for f in files:
+        upload(client, f)
+    for _ in range(200):
+        v = client.get("/api/alerts/due").json()["ai"]
+        if not v["running"] and v["queuedUploads"] == 0:
+            break
+        time.sleep(0.05)
+
+
+def _same_header_answer(priority=None):
+    def answer(system, user, schema):
+        req = json.loads(user)
+        inc = req["incident"]
+        same = [{"id": c["id"], "relation": "same", "explanation": "та же проблема"} for c in req["candidates"]
+                if c["header"] == inc["header"]]
+        return {"similar": same, "solution": {"weak": None, "reason": ""}, "team": {"name": None, "reason": ""},
+                "priority": priority(inc) if priority else {"suggested": None, "reason": ""}}
+    return answer
+
+
+def test_waves_group_active_same_problem_and_collapse(client, monkeypatch):
+    """Волна: активные инциденты одной проблемы объединяются по цепочке и схлопываются в колонке."""
+    from app.db import Board, SessionLocal
+    import random
+    base = json.loads((__import__("conftest").DEMO / "01_now.json").read_text(encoding="utf-8"))
+    tpl = base[0]
+    recs = []
+    for i, h in enumerate(["Не приходят SMS-коды для входа"] * 3 + ["Отказ оплаты"]):
+        r = dict(tpl, id=f"W{i}", header=h, stateId=0, state="Назначен", serviceId="S-W", productId="P-W",
+                 description=h + " у абонентов", submitDate=f"2026-11-21T0{i}:00:00Z", solution=None)
+        recs.append(r)
+    path = __import__("conftest").DEMO.parent / "backend" / "tests" / "_waves.json"
+    path.write_text(json.dumps(recs, ensure_ascii=False), encoding="utf-8")
+    try:
+        _run_fake_ai(client, monkeypatch, [], _same_header_answer())
+        with open(path, "rb") as f:
+            client.post("/api/snapshots", files={"file": ("_waves.json", f, "application/json")})
+        import time
+        for _ in range(200):
+            v = client.get("/api/alerts/due").json()["ai"]
+            if not v["running"] and v["queuedUploads"] == 0:
+                break
+            time.sleep(0.05)
+    finally:
+        path.unlink()
+    card = client.get("/api/incidents/W1").json()
+    assert card["calc"]["ai.waveSize"] == 3 and card["wave"]["size"] == 3
+    assert [m["id"] for m in card["wave"]["members"]] == ["W0", "W1", "W2"]
+    assert client.get("/api/incidents/W3").json()["calc"]["ai.waveSize"] is None
+    # колонка со схлопыванием: одна карточка волны, остальные внутри
+    b = client.post("/api/boards", json={"name": "Волны"}).json()
+    col = client.post(f"/api/boards/{b['id']}/columns", json={"name": "Все", "rule": {"field": "id", "cmp": "starts_with", "value": "W"},
+                                                               "groupSimilar": True, "sortField": "id"}).json()
+    lay = [c for c in client.get(f"/api/boards/{b['id']}/layout").json()["columns"] if c["id"] == col["id"]][0]
+    assert lay["total"] == 4 and len(lay["cards"]) == 2
+    lead = lay["cards"][0]
+    assert lead["id"] == "W0" and [x["id"] for x in lead["waveMembers"]] == ["W1", "W2"]
+    presets = {p["id"]: p for p in client.get("/api/presets").json()}
+    assert presets[16]["count"] == 3
+
+
+def test_priority_underestimated(client, monkeypatch):
+    ids = demo_ids()
+
+    def prio(inc):
+        return {"suggested": 4, "reason": "массовые жалобы"} if inc["id"] == ids["complaints"] else {"suggested": None, "reason": ""}
+
+    _run_fake_ai(client, monkeypatch, ["01_now.json"], _same_header_answer(prio))
+    c = client.get(f"/api/incidents/{ids['complaints']}").json()["calc"]
+    assert c["ai.suggestedPriority"] == 4 and c["ai.priorityUnderestimated"] is True
+    assert c["ai.priorityReason"] == "массовые жалобы"
+    presets = {p["id"]: p for p in client.get("/api/presets").json()}
+    assert presets[17]["count"] == 1
+    from app.llm.pipeline import _priority
+    assert _priority({"suggested": 2, "reason": "x"}, 3)["priorityUnderestimated"] is False  # завышенный не сигнал
+    assert _priority({"suggested": 9, "reason": "x"}, 1)["suggestedPriority"] is None  # вне шкалы отбрасывается
+
+
+def test_overdue_risk_from_similar_history(client, monkeypatch):
+    """Риск просрочки: похожие случаи решались дольше, чем осталось до срока."""
+    ids = demo_ids()
+    _run_fake_ai(client, monkeypatch, ["00_history.json", "01_now.json", "02_new_critical.json",
+                                       "03_reassign_and_resolve.json", "04_reopen_again.json",
+                                       "05_complaints_growth.json", "06_disk_full_again.json"], _same_header_answer())
+    # новый «диск заполнен»: цепочка решалась 25–70 мин; поставим «сейчас» за 10 минут до срока
+    from app.fields import parse_dt
+    from datetime import timedelta
+    d = client.get(f"/api/incidents/{ids['disk_new']}").json()
+    deadline = parse_dt(d["data"]["deadline"])
+    set_now(client, (deadline - timedelta(minutes=10)).isoformat().replace("+00:00", "Z"))
+    c = client.get(f"/api/incidents/{ids['disk_new']}").json()["calc"]
+    assert c["ai.overdueRisk"] is True and 25 <= c["ai.expectedResolveMin"] <= 70
+    assert "найденным ИИ" in c["ai.overdueRiskReason"]
+    # за сутки до срока риска нет
+    set_now(client, (deadline - timedelta(hours=20)).isoformat().replace("+00:00", "Z"))
+    assert client.get(f"/api/incidents/{ids['disk_new']}").json()["calc"]["ai.overdueRisk"] is False

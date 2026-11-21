@@ -254,6 +254,13 @@ function Tile({ column: c, tile, editing, scale, onChange, openIncident }: {
               <button className="wcard__open" onClick={() => !editing && openIncident(k.id)} disabled={editing}
                 aria-label={`Открыть ${k.id}`}>
                 <span className="mono">{k.id}</span>
+                {(k.wave || k.priorityUnderestimated || k.overdueRisk) && (
+                  <span className="wcard__tags">
+                    {k.wave && <span className="tag tag--wave">волна · {k.wave.size}</span>}
+                    {k.priorityUnderestimated && <span className="tag tag--warn">приоритет занижен?</span>}
+                    {k.overdueRisk && <span className="tag tag--warn">риск просрочки</span>}
+                  </span>
+                )}
                 <p>{k.header}</p>
                 {k.deadlineLeftMin !== null && (
                   <em className={k.overdue ? "is-over" : ""}>
