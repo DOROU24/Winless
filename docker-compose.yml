@@ -12,6 +12,8 @@ services:
       - LLM_MODEL=${LLM_MODEL:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
     volumes: ["dbdata:/data"]   # база переживает перезапуск контейнера
+    env_file:
+      - .env
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
       interval: 5s
