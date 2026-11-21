@@ -524,3 +524,15 @@ def test_preview_respects_first_column_mode(client):
     # новая колонка (без id) встаёт в конец: всё, что выше, уже занято
     pn = client.post("/api/rules/preview", json={"rule": rule_b, "boardId": b["id"]}).json()
     assert pn["inColumn"] == 0
+
+
+def test_graph_shows_only_linked_incidents(client):
+    upload(client, "00_history.json")
+    upload(client, "01_now.json")
+    g = client.get("/api/graph").json()
+    linked = {e["src"] for e in g["edges"]} | {e["dst"] for e in g["edges"]}
+    assert g["nodes"] and {n["id"] for n in g["nodes"]} == linked
+    # параметр доски больше не добавляет узлы без связей
+    b = client.get("/api/boards").json()["boards"][0]
+    g2 = client.get(f"/api/graph?board_id={b['id']}").json()
+    assert {n["id"] for n in g2["nodes"]} == linked

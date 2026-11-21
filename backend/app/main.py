@@ -722,13 +722,13 @@ def delete_link_rule(rule_id: int, s: Session = DB):
 # ---- граф -------------------------------------------------------------------------------------
 
 @app.get("/api/graph")
-def graph(board_id: int | None = None, column_id: int | None = None, link_type: str | None = None,
-          source: str | None = None, active_only: bool = False, s: Session = DB):
+def graph(link_type: str | None = None, source: str | None = None, active_only: bool = False, s: Session = DB):
+    """Граф связей: только инциденты, у которых есть связи. Цвет узла — уровень колонки активной доски."""
     ctx = build_context(s)
     reg = registry(ctx)
     incidents = load_incidents(s)
     by_id = {i.id: i for i in incidents}
-    bid = board_id or get_setting(s, "active_board_id")
+    bid = get_setting(s, "active_board_id")
     board = s.get(Board, bid) if bid else None
     levels = incident_levels(s, board, ctx, reg, incidents) if board else {}
     q = select(Link)
@@ -737,15 +737,6 @@ def graph(board_id: int | None = None, column_id: int | None = None, link_type: 
     if source:
         q = q.where(Link.source == source)
     links = list(s.execute(q).scalars())
-
-    scope: set[str] | None = None
-    if board_id:
-        scope = set(levels)
-    if column_id:
-        scope = {iid for iid, v in levels.items() if v["columnId"] == column_id}
-        if board:
-            placed = place(board, board_columns(s, board.id), incidents, reg, ctx)
-            scope = {i.id for i in placed.get(column_id, [])}
 
     def ok(iid: str) -> bool:
         inc = by_id.get(iid)
@@ -767,12 +758,8 @@ def graph(board_id: int | None = None, column_id: int | None = None, link_type: 
         if not l.directed and pair in seen_pairs:  # ИИ находит пару с обеих сторон — рисуем один раз
             continue
         seen_pairs.add(pair)
-        if scope is not None and not (l.src in scope or l.dst in scope):
-            continue
         edges.append(link_dict(l))
-        nodes.update((l.src, l.dst))
-    if scope is not None:
-        nodes.update(i for i in scope if ok(i))
+        nodes.update((l.src, l.dst))  # узлы берутся только из связей
     node_list = []
     for iid in nodes:
         inc = by_id[iid]

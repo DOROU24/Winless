@@ -15,15 +15,12 @@ export default function GraphPage() {
   const s = useStore();
   const box = useRef<HTMLDivElement>(null);
   const cy = useRef<Core | null>(null);
-  const [boardId, setBoardId] = useState<number | "">("");
-  const [columnId, setColumnId] = useState<number | "">("");
   const [linkType, setLinkType] = useState("");
   const [source, setSource] = useState("");
   const [activeOnly, setActiveOnly] = useState(false);
   const [stats, setStats] = useState({ nodes: 0, edges: 0 });
   const [hover, setHover] = useState<GNode | null>(null);
 
-  const board = s.boards.find((b) => b.id === boardId);
 
   // Сохранённые позиции узлов и подпись данных: граф перерисовывается, только когда связи правда изменились.
   // Раньше он пересоздавался со случайной раскладкой при каждом обновлении данных (раз в 30 с, а пока
@@ -31,15 +28,13 @@ export default function GraphPage() {
   const positions = useRef<Record<string, { x: number; y: number }>>({});
   const signature = useRef("");
   const view = useRef<{ zoom: number; pan: { x: number; y: number } } | null>(null);
-  const filtersKey = `${boardId}|${columnId}|${linkType}|${source}|${activeOnly}`;
+  const filtersKey = `${linkType}|${source}|${activeOnly}`;
   const lastFilters = useRef(filtersKey);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const qs = new URLSearchParams();
-      if (boardId) qs.set("board_id", String(boardId));
-      if (columnId) qs.set("column_id", String(columnId));
       if (linkType) qs.set("link_type", linkType);
       if (source) qs.set("source", source);
       if (activeOnly) qs.set("active_only", "true");
@@ -129,7 +124,7 @@ export default function GraphPage() {
     return () => {
       cancelled = true;
     };
-  }, [boardId, columnId, linkType, source, activeOnly, s.version]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [linkType, source, activeOnly, s.version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => () => cy.current?.destroy(), []);
 
@@ -137,14 +132,6 @@ export default function GraphPage() {
     <div className="graph">
       <div className="graph__bar">
         <h1>Граф связей</h1>
-        <select value={boardId} onChange={(e) => { setBoardId(e.target.value ? Number(e.target.value) : ""); setColumnId(""); }} aria-label="Доска">
-          <option value="">Все инциденты со связями</option>
-          {s.boards.map((b) => <option key={b.id} value={b.id}>Доска «{b.name}»</option>)}
-        </select>
-        <select value={columnId} onChange={(e) => setColumnId(e.target.value ? Number(e.target.value) : "")} disabled={!board} aria-label="Колонка">
-          <option value="">Все колонки</option>
-          {board?.columns?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
         <select value={linkType} onChange={(e) => setLinkType(e.target.value)} aria-label="Тип связи">
           <option value="">Любой тип связи</option>
           <option value="related">Связан</option>
