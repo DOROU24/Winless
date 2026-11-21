@@ -106,14 +106,19 @@ def prepare(inc: Incident, pool: list[Incident], teams: list) -> tuple[str, dict
     return user, meta
 
 
-def interpret(resp: dict, meta: dict) -> dict:
-    """Ответ модели → поля ai.*. Ссылки только на переданных кандидатов: чужие id отбрасываются."""
+def interpret(resp: dict, meta: dict, has_solution: bool = True) -> dict:
+    """Ответ модели → поля ai.*. Ссылки только на переданных кандидатов: чужие id отбрасываются.
+
+    Если у инцидента нет текста решения, оценивать нечего: «отписка» пустая, что бы ни ответила модель
+    (gpt-4.1-mini иногда помечает отпиской инцидент без решения, хотя промпт просит null).
+    """
     same = [x for x in resp["similar"] if x["relation"] == "same" and x["id"] in meta]
     past = [x for x in same if meta[x["id"]]["resolved"]]
     open_ = [x for x in same if meta[x["id"]]["active"]]
     return {
         "similarPastCount": len(past), "similarOpenCount": len(open_),
-        "weakSolution": resp["solution"]["weak"], "weakSolutionReason": resp["solution"]["reason"],
+        "weakSolution": resp["solution"]["weak"] if has_solution else None,
+        "weakSolutionReason": resp["solution"]["reason"] if has_solution else None,
         "suggestedTeam": resp["team"]["name"], "suggestedTeamReason": resp["team"]["reason"],
         "similar": [{**x, "resolved": meta[x["id"]]["resolved"]} for x in resp["similar"] if x["id"] in meta],
         "facts": resp.get("facts", []), "assumptions": resp.get("assumptions", []),
@@ -123,7 +128,7 @@ def interpret(resp: dict, meta: dict) -> dict:
 
 def analyze(s: Session, inc: Incident, pool: list[Incident]) -> dict:
     user, meta = prepare(inc, pool, get_setting(s, "teams", []))
-    return interpret(ask_json(SYSTEM, user, SCHEMA), meta)
+    return interpret(ask_json(SYSTEM, user, SCHEMA), meta, bool((inc.data.get("solution") or "").strip()))
 
 
 def _targets(s: Session, snapshot_id: int) -> set[str]:
@@ -171,16 +176,17 @@ def process_snapshot(snapshot_id: int, progress: dict | None = None) -> dict:
             if row is not None and row.text_hash == h and not row.error:
                 cached += 1  # текст не менялся — модель повторно не вызываем
                 continue
-            jobs.append((iid, h, *prepare(by_id[iid], pool, teams)))
+            has_solution = bool((by_id[iid].data.get("solution") or "").strip())
+            jobs.append((iid, h, has_solution, *prepare(by_id[iid], pool, teams)))
     progress.update(total=len(jobs), done=0, errors=0, cached=cached, skipped=skipped)
     done = errors = 0
     if jobs:
         with ThreadPoolExecutor(max_workers=CONCURRENCY, thread_name_prefix="llm") as ex, SessionLocal() as s:
-            futures = {ex.submit(ask_json, SYSTEM, user, SCHEMA): (iid, h, meta) for iid, h, user, meta in jobs}
+            futures = {ex.submit(ask_json, SYSTEM, user, SCHEMA): (iid, h, sol, meta) for iid, h, sol, user, meta in jobs}
             for fut in as_completed(futures):
-                iid, h, meta = futures[fut]
+                iid, h, has_solution, meta = futures[fut]
                 try:
-                    data, err = interpret(fut.result(), meta), None
+                    data, err = interpret(fut.result(), meta, has_solution), None
                 except Exception as e:  # невалидный ответ = сигнал не посчитан, ошибка в лог
                     log.warning("LLM: не удалось обработать %s: %s", iid, e)
                     data, err = {}, str(e)

@@ -226,8 +226,8 @@ function Tile({ column: c, tile, editing, scale, onChange }: {
     else onChange({ x: clamp(tile.x + d[0], 0, COLS - tile.w), y: Math.max(0, tile.y + d[1]) });
   };
 
-  const cards = tile.showCards ? c.cards.slice(0, tile.maxCards) : [];
-  const more = tile.showCards ? c.total - cards.length : 0;
+  // все задачи колонки; если не помещаются в плитку, список листается колёсиком или пальцем
+  const cards = tile.showCards ? c.cards : [];
 
   return (
     <section
@@ -247,7 +247,8 @@ function Tile({ column: c, tile, editing, scale, onChange }: {
       {!tile.showCards && <strong className="wtile__big">{c.total}</strong>}
 
       {tile.showCards && (
-        <ul className="wtile__cards">
+        <ul className="wtile__cards" tabIndex={0} aria-label={`Задачи колонки «${c.name}»`}
+          onPointerDown={(e) => e.stopPropagation()}>
           {cards.map((k) => (
             <li key={k.id} className="wcard">
               <Fuse pct={k.deadlineLeftPct} overdue={k.overdue} />
@@ -262,7 +263,6 @@ function Tile({ column: c, tile, editing, scale, onChange }: {
               </div>
             </li>
           ))}
-          {more > 0 && <li className="wcard wcard--more">ещё {more}</li>}
           {c.total === 0 && <li className="wtile__empty">Пусто</li>}
         </ul>
       )}
@@ -276,13 +276,6 @@ function Tile({ column: c, tile, editing, scale, onChange }: {
             <button className={!tile.showCards ? "is-on" : ""} onClick={() => onChange({ showCards: false })}>Счётчик</button>
             <button className={tile.showCards ? "is-on" : ""} onClick={() => onChange({ showCards: true })}>Карточки</button>
           </div>
-          {tile.showCards && (
-            <span className="wtile__max">
-              <button className="icon-btn" onClick={() => onChange({ maxCards: Math.max(1, tile.maxCards - 1) })} aria-label="Меньше карточек">−</button>
-              <span>{tile.maxCards}</span>
-              <button className="icon-btn" onClick={() => onChange({ maxCards: Math.min(30, tile.maxCards + 1) })} aria-label="Больше карточек">+</button>
-            </span>
-          )}
         </div>
       )}
       {editing && <span className="wtile__resize" onPointerDown={startDrag("resize")} aria-hidden title="Потяните, чтобы изменить размер" />}

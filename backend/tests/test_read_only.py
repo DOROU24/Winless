@@ -66,7 +66,7 @@ def sample_body(method: str, path: str, ctx: dict) -> dict:
     if path.startswith("/api/boards/") and path.count("/") == 3 and method == "PATCH":
         return {"name": "Переименована", "mode": "all", "wallLayout": {"scale": 1.2, "tiles": {}}}
     if path == "/api/settings":
-        return {"virtualNow": DEMO_NOW, "itsmUrlTemplate": "https://itsm.example/{id}"}
+        return {"itsmUrlTemplate": "https://itsm.example/{id}"}
     return {}
 
 
@@ -80,7 +80,8 @@ def fill(path: str, ctx: dict) -> str:
 def test_no_endpoint_except_upload_changes_incidents(client):
     upload(client, "00_history.json")
     upload(client, "01_now.json")
-    client.patch("/api/settings", json={"virtualNow": DEMO_NOW})
+    import os
+    os.environ["MTS_NOW"] = DEMO_NOW
     upload(client, "02_new_critical.json")
     client.get("/api/alerts/due")
 

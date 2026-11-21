@@ -237,11 +237,6 @@ function TopBar() {
             ИИ анализирует{s.ai.total ? `: ${s.ai.done ?? 0} из ${s.ai.total}` : "…"}
           </span>
         )}
-        {s.settings?.virtualNow && (
-          <Link href="/settings" className="chip chip--warn" title="Виртуальное «сейчас» включено в настройках">
-            <Icon name="clock" size={13} /> Сейчас: {new Date(s.settings.virtualNow).toLocaleString("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
-          </Link>
-        )}
       </div>
       <div className="top__actions">
         <input

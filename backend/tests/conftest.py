@@ -17,6 +17,7 @@ DEMO = ROOT / "demo_data"
 
 @pytest.fixture()
 def client():
+    os.environ.pop("MTS_NOW", None)  # каждый тест начинает с реального времени
     from fastapi.testclient import TestClient
     from app.db import Base, engine
     from app.main import app

@@ -8,18 +8,9 @@ import { FieldPicker } from "@/components/RuleBuilder";
 
 const LINK_TYPES: Record<string, string> = { related: "Связан", repeat: "Повтор", double: "Дубль", cause: "Причина → следствие" };
 
-function toLocalInput(iso: string | null) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  const off = d.getTimezoneOffset() * 60000;
-  return new Date(d.getTime() - off).toISOString().slice(0, 16);
-}
-
 export default function SettingsPage() {
   const s = useStore();
   const [st, setSt] = useState<Settings | null>(null);
-  const [vnOn, setVnOn] = useState(false);
-  const [vn, setVn] = useState("");
   const [tmpl, setTmpl] = useState("");
   const [rules, setRules] = useState<LinkRule[]>([]);
   const [teams, setTeams] = useState<{ team: string; scope: string }[]>([]);
@@ -28,8 +19,6 @@ export default function SettingsPage() {
   const load = async () => {
     const [x, r] = await Promise.all([api.get<Settings>("/api/settings"), api.get<LinkRule[]>("/api/link-rules")]);
     setSt(x);
-    setVnOn(!!x.virtualNow);
-    setVn(toLocalInput(x.virtualNow ?? new Date().toISOString()));
     setTmpl(x.itsmUrlTemplate);
     setTeams(x.teams);
     setRules(r);
@@ -37,18 +26,6 @@ export default function SettingsPage() {
   useEffect(() => {
     load();
   }, []);
-
-  const saveNow = async (on: boolean, value = vn) => {
-    setVnOn(on);
-    try {
-      await api.patch("/api/settings", on ? { virtualNow: new Date(value).toISOString() } : { virtualNowOff: true });
-      await s.reloadMeta();
-      s.bump();
-      s.toast(on ? "Виртуальное «сейчас» включено" : "Время снова реальное");
-    } catch (e) {
-      s.toast((e as Error).message, "error");
-    }
-  };
 
   const saveTmpl = async () => {
     await api.patch("/api/settings", { itsmUrlTemplate: tmpl });
@@ -98,26 +75,6 @@ export default function SettingsPage() {
       <div className="pagehead">
         <h1>Настройки</h1>
       </div>
-
-      <section className="panel">
-        <h2>Виртуальное «сейчас»</h2>
-        <p className="muted">
-          Сроки, простой и возраст считаются от этого времени.
-        </p>
-        <div className="row">
-          <div className="seg">
-            <button className={!vnOn ? "is-on" : ""} onClick={() => saveNow(false)}>Реальное время</button>
-            <button className={vnOn ? "is-on" : ""} onClick={() => saveNow(true)}>Выбранное</button>
-          </div>
-          <input type="datetime-local" value={vn} onChange={(e) => setVn(e.target.value)} disabled={!vnOn} aria-label="Дата и время" />
-          {vnOn && <button className="btn" onClick={() => saveNow(true)}>Применить</button>}
-          <button className="btn btn--ghost" onClick={() => { setVn(toLocalInput("2026-11-21T09:00:00Z")); saveNow(true, "2026-11-21T09:00:00Z"); }}
-            title="Время, от которого посчитаны демо-данные (09:00 UTC)">
-            Время демо-данных
-          </button>
-        </div>
-        <p className="small muted">Сейчас для расчётов: {new Date(st.now).toLocaleString("ru-RU")}</p>
-      </section>
 
       <section className="panel">
         <h2>Ссылка в ITSM</h2>

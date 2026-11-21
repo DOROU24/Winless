@@ -74,10 +74,7 @@ PRESETS = [
     dict(id=10, name="Исследование без срока", origin="наш",
          description="Разбор причин идёт без срока и может длиться бесконечно.",
          rule=AND(C("stateId", "eq", 20), C("calc.noDeadline", "is_true")), level="info", alert="off"),
-    dict(id=11, name="Низкий приоритет, а жалобы растут", origin="МТС",
-         description="Приоритет низкий или средний, а жалоб с прошлой загрузки стало на 5 и больше.",
-         rule=AND(C("priorityId", "in", [1, 2]), C("hist.delta", "gte", 5, {"field": "complaintsCount"})),
-         level="elevated", alert="popup"),
+    # Правило 11 («Низкий приоритет, а жалобы растут») убрано из каталога по решению команды.
     # ---- этап 2 ----
     dict(id=12, name="Повтор: такая проблема уже была", origin="МТС + наш", stage=2,
          description="ИИ нашёл решённые инциденты с той же проблемой.",
@@ -110,7 +107,7 @@ TEMPLATES = {
             {"name": "Срок", "presets": [4], "sort": ("calc.deadlineLeftMin", "asc")},
             {"name": "Повторы и дубли", "presets": [], "ai_presets": [12, 13, 15], "sort": ("calc.ageMin", "desc")},
             {"name": "Решение буксует", "presets": [6, 7, 8], "sort": ("calc.ageMin", "desc")},
-            {"name": "Проверить", "presets": [9, 10, 11], "ai_presets": [14], "sort": ("submitDate", "desc")},
+            {"name": "Проверить", "presets": [9, 10], "ai_presets": [14], "sort": ("submitDate", "desc")},
         ],
     },
     "mts": {
@@ -248,6 +245,8 @@ def seed(s: Session) -> None:
     if get_setting(s, "initialized") is None:
         b = create_board_from_template(s, "focus")
         set_setting(s, "active_board_id", b.id)
-        set_setting(s, "virtual_now", None)
         set_setting(s, "initialized", True)
+    # Настройку виртуального «сейчас» убрали: время всегда реальное. Старое значение из базы стираем.
+    if get_setting(s, "virtual_now") is not None:
+        set_setting(s, "virtual_now", None)
     s.commit()

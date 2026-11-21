@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime, timezone
@@ -76,11 +77,17 @@ class EvalContext:
         return self._ai
 
 
+def current_now() -> datetime:
+    """Текущее время для правил. Всегда реальное; менять его из интерфейса или API нельзя.
+
+    Только для автотестов и демо-стенда можно зафиксировать время переменной окружения MTS_NOW (ISO 8601).
+    """
+    fixed = parse_dt(os.environ.get("MTS_NOW", "")) if os.environ.get("MTS_NOW") else None
+    return fixed or datetime.now(timezone.utc)
+
+
 def build_context(s: Session) -> EvalContext:
-    vn = get_setting(s, "virtual_now")
-    now = parse_dt(vn) if vn else None
-    if now is None:
-        now = datetime.now(timezone.utc)
+    now = current_now()
     latest = s.execute(select(Snapshot.id).order_by(Snapshot.id.desc()).limit(1)).scalar()
     catalog = {r.name: r for r in s.execute(select(FieldCatalog)).scalars()}
     return EvalContext(session=s, now=now, latest_snapshot_id=latest, catalog=catalog)

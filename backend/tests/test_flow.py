@@ -1,5 +1,6 @@
 """Сквозные тесты: загрузка, история, реестр полей, правила каталога на демо-данных, доски, оповещения, связи."""
 import json
+import os
 import time
 
 from conftest import demo_ids, upload
@@ -9,9 +10,9 @@ FILES = ["00_history.json", "01_now.json", "02_new_critical.json", "03_reassign_
          "04_reopen_again.json", "05_complaints_growth.json", "06_disk_full_again.json"]
 
 
-def set_now(client):
-    r = client.patch("/api/settings", json={"virtualNow": DEMO_NOW})
-    assert r.status_code == 200
+def set_now(client, when=DEMO_NOW):
+    """Фиксирует время для правил. Через интерфейс и API время не меняется — только MTS_NOW для тестов."""
+    os.environ["MTS_NOW"] = when
 
 
 def preset_matches(client, pid):
@@ -96,7 +97,7 @@ def test_calc_fields_and_virtual_now(client):
     assert chain["calc"]["calc.disappeared"] and chain["calc"]["calc.deadlineLeftMin"] < 0
     assert chain["calc"]["calc.overdue"] is False  # закрыт — не просрочен
     # «сейчас» сдвинули — значения поменялись
-    client.patch("/api/settings", json={"virtualNow": "2026-11-21T09:20:00Z"})
+    set_now(client, "2026-11-21T09:20:00Z")
     c1b = client.get(f"/api/incidents/{ids['c1']}").json()["calc"]
     assert c1b["calc.overdue"] and c1b["calc.deadlineLeftMin"] == -10
 
@@ -151,17 +152,17 @@ def test_catalog_rules_on_demo(client):
     assert ids["reopened"] in preset_matches(client, 6)
     assert ids["priority_ups"] in preset_matches(client, 8)
     upload(client, "05_complaints_growth.json")
-    assert preset_matches(client, 11) == {ids["complaints"]}
     presets = {p["id"]: p for p in client.get("/api/presets").json()}
-    assert presets[11]["noData"] is False and presets[12]["noData"] is True
+    assert 11 not in presets and presets[12]["noData"] is True  # правило 11 убрано из каталога
 
 
-def test_preset_11_without_field(client):
-    payload = json.dumps([{"id": "A", "priorityId": 1, "priority": "Низкий"}]).encode()
-    client.post("/api/snapshots", files={"file": ("a.json", payload, "application/json")})
-    p = {x["id"]: x for x in client.get("/api/presets").json()}[11]
-    assert p["noData"] and "complaintsCount" in p["warning"]
-
+def test_preset_11_removed(client):
+    """Правило 11 убрано из каталога и из шаблона «Фокус внимания»."""
+    from app.templates import PRESETS, TEMPLATES
+    assert 11 not in {p["id"] for p in PRESETS}
+    assert 11 not in {p["id"] for p in client.get("/api/presets").json()}
+    check = [c for c in TEMPLATES["focus"]["columns"] if c["name"] == "Проверить"][0]
+    assert 11 not in check["presets"]
 
 def test_board_crud_layout_and_modes(client):
     upload(client, "00_history.json")
@@ -339,7 +340,6 @@ def test_new_board_does_not_realert(client):
     dup = client.post(f"/api/boards/{b['id']}/duplicate").json()
     client.patch(f"/api/boards/{b['id']}/columns/{c['id']}", json={"rule": {"field": "priorityId", "cmp": "gte", "value": 3}})
     client.patch(f"/api/boards/{dup['id']}", json={"mode": "first"})
-    client.patch("/api/settings", json={"virtualNow": "2026-11-21T09:30:00Z"})
     due = client.get("/api/alerts/due").json()["due"]
     assert due == [], [a["column"] for a in due]
     assert len(client.get("/api/alerts").json()) == before
@@ -536,3 +536,23 @@ def test_graph_shows_only_linked_incidents(client):
     b = client.get("/api/boards").json()["boards"][0]
     g2 = client.get(f"/api/graph?board_id={b['id']}").json()
     assert {n["id"] for n in g2["nodes"]} == linked
+
+
+def test_weak_solution_empty_without_solution():
+    """Модель иногда помечает отпиской инцидент без решения — такой ответ игнорируется."""
+    from app.llm.pipeline import interpret
+    resp = {"similar": [], "solution": {"weak": True, "reason": "нет решения"}, "team": {"name": None, "reason": ""}}
+    assert interpret(resp, {}, has_solution=False)["weakSolution"] is None
+    assert interpret(resp, {}, has_solution=True)["weakSolution"] is True
+
+
+def test_time_cannot_be_changed_via_api(client):
+    """Настройку времени убрали: время для правил не меняется через API."""
+    os.environ.pop("MTS_NOW", None)
+    st = client.get("/api/settings").json()
+    assert "virtualNow" not in st
+    client.patch("/api/settings", json={"virtualNow": "2020-01-01T00:00:00Z"})  # поле игнорируется
+    from datetime import datetime, timezone
+    from app.fields import parse_dt
+    now = parse_dt(client.get("/api/settings").json()["now"])
+    assert abs((now - datetime.now(timezone.utc)).total_seconds()) < 60

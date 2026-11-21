@@ -193,7 +193,6 @@ export interface Snapshot {
 }
 
 export interface Settings {
-  virtualNow: string | null;
   itsmUrlTemplate: string;
   activeBoardId: number | null;
   teams: { team: string; scope: string }[];

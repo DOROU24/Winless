@@ -497,7 +497,10 @@ select[multiple] { min-height: 70px; }
 .wtile--critical .wtile__count, .wtile--critical .wtile__big { color: var(--crit); }
 /* режим «только счётчик»: число растёт вместе с плиткой */
 .wtile__big { flex: 1; display: grid; place-items: center; font-weight: 700; line-height: 1; letter-spacing: -0.04em; font-size: clamp(28px, min(55cqh, 40cqw), 320px); }
-.wtile__cards { display: flex; flex-direction: column; gap: calc(10px * var(--wall-scale)); margin-top: calc(14px * var(--wall-scale)); overflow: hidden; flex: 1; min-height: 0; }
+.wtile__cards { display: flex; flex-direction: column; gap: calc(10px * var(--wall-scale)); margin-top: calc(14px * var(--wall-scale)); flex: 1; min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; padding-right: 4px; }
+.wtile__cards:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+.wall.is-editing .wtile__cards { padding-bottom: 56px; } /* не прячем последнюю карточку под панелью настройки плитки */
 .wtile__cards > li { flex-shrink: 0; }
 .wtile__empty { color: var(--muted); font-size: calc(16px * var(--wall-scale)); }
 

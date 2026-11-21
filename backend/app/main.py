@@ -774,15 +774,13 @@ def graph(link_type: str | None = None, source: str | None = None, active_only: 
 # ---- настройки ----------------------------------------------------------------------------------
 
 class SettingsBody(BaseModel):
-    virtualNow: str | None = None
-    virtualNowOff: bool | None = None
     itsmUrlTemplate: str | None = None
     activeBoardId: int | None = None
     teams: list[dict] | None = None
 
 
 def _settings(s: Session):
-    return {"virtualNow": get_setting(s, "virtual_now"), "itsmUrlTemplate": get_setting(s, "itsm_url_template"),
+    return {"itsmUrlTemplate": get_setting(s, "itsm_url_template"),
             "activeBoardId": get_setting(s, "active_board_id"), "teams": get_setting(s, "teams", []),
             "aiAvailable": __import__("app.llm.adapter", fromlist=["x"]).is_configured(),
             "now": build_context(s).now.isoformat()}
@@ -795,13 +793,6 @@ def get_settings(s: Session = DB):
 
 @app.patch("/api/settings")
 def patch_settings(body: SettingsBody, s: Session = DB):
-    if body.virtualNowOff:
-        set_setting(s, "virtual_now", None)
-    elif body.virtualNow:
-        d = parse_dt(body.virtualNow)
-        if d is None:
-            err(422, "Не удалось разобрать дату виртуального «сейчас»")
-        set_setting(s, "virtual_now", d.isoformat().replace("+00:00", "Z"))
     if body.itsmUrlTemplate is not None:
         set_setting(s, "itsm_url_template", body.itsmUrlTemplate.strip() or "/itsm/{id}")
     if body.activeBoardId is not None:
@@ -810,8 +801,5 @@ def patch_settings(body: SettingsBody, s: Session = DB):
         set_setting(s, "active_board_id", body.activeBoardId)
     if body.teams is not None:
         set_setting(s, "teams", [t for t in body.teams if (t.get("team") or "").strip()])
-    if body.virtualNowOff or body.virtualNow:
-        s.flush()
-        alerts_mod.baseline(s)  # сдвиг «сейчас» — настройка просмотра, а не новые данные
     s.commit()
     return _settings(s)
