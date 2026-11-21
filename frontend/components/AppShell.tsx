@@ -22,6 +22,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const s = useStore();
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
+  // свёрнутая левая панель: только иконки; запоминается в браузере
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    try { setNarrow(localStorage.getItem("mts.sideNarrow") === "1"); } catch { /* пусто */ }
+  }, []);
+  const toggleNarrow = () => setNarrow((v) => {
+    try { localStorage.setItem("mts.sideNarrow", v ? "0" : "1"); } catch { /* пусто */ }
+    return !v;
+  });
 
   useEffect(() => {
     const onEnter = (e: DragEvent) => {
@@ -66,8 +75,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="shell">
-      <Sidebar />
+    <div className={`shell ${narrow ? "shell--narrow" : ""}`}>
+      <Sidebar narrow={narrow} onToggle={toggleNarrow} />
       <div className="main">
         <TopBar />
         <main className="page">{children}</main>
@@ -88,7 +97,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Sidebar() {
+function Sidebar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void }) {
   const path = usePathname();
   const router = useRouter();
   const s = useStore();
@@ -100,15 +109,19 @@ function Sidebar() {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img className="side__logo" src="/brand/logo.svg" alt="МТС" width={32} height={32} />
         <span>Пульт координатора</span>
+        <button className="icon-btn side__toggle" onClick={onToggle} aria-expanded={!narrow}
+          aria-label={narrow ? "Развернуть панель" : "Свернуть панель"} title={narrow ? "Развернуть панель" : "Свернуть панель"}>
+          <Icon name="panel" />
+        </button>
       </div>
       <nav className="side__nav" aria-label="Разделы">
         {NAV.map((n) => (
-          <Link key={n.href} href={n.href} className={`side__link ${path === n.href ? "is-active" : ""}`}>
+          <Link key={n.href} href={n.href} className={`side__link ${path === n.href ? "is-active" : ""}`} title={narrow ? n.label : undefined}>
             <Icon name={n.icon} />
             <span>{n.label}</span>
           </Link>
         ))}
-        <a href="/wall" target="_blank" rel="noreferrer" className="side__link">
+        <a href="/wall" target="_blank" rel="noreferrer" className="side__link" title={narrow ? "Экран на стене" : undefined}>
           <Icon name="wall" />
           <span>Экран на стене</span>
           <Icon name="external" size={13} className="side__ext" />
@@ -126,12 +139,14 @@ function Sidebar() {
             <li key={b.id}>
               <button
                 className={`side__board ${b.id === s.activeBoardId ? "is-active" : ""}`}
+                title={narrow ? b.name : undefined}
                 onClick={async () => {
                   await s.setActiveBoard(b.id);
                   if (path !== "/") router.push("/");
                 }}
               >
                 <Icon name="folder" size={14} />
+                <i className="side__initial" aria-hidden>{b.name.trim().slice(0, 1).toUpperCase()}</i>
                 <span>{b.name}</span>
                 <em>{b.columns?.length ?? 0}</em>
               </button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { CardData, LayoutColumn } from "@/lib/api";
@@ -18,10 +18,12 @@ export function ColumnView({
   onToggle: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: column.id });
+  const [width, startResize, resetWidth] = useColumnWidth(column.id);
   const style = {
     transform: CSS.Translate.toString(transform),
     transition,
     "--col": column.color,
+    ...(width && !column.collapsed ? { flexBasis: width } : {}),
   } as React.CSSProperties;
 
   if (column.collapsed) {
@@ -68,6 +70,8 @@ export function ColumnView({
           </div>
         </div>
       )}
+      <div className="col__resize" onPointerDown={startResize} onDoubleClick={resetWidth} role="separator"
+        aria-orientation="vertical" aria-label="Ширина колонки" title="Потяните, чтобы изменить ширину. Двойной щелчок — по умолчанию" />
       <div className="col__body">
         {column.cards.length === 0 && (
           <p className="col__empty">{column.rule ? "Сейчас ничего не подходит" : "Правила нет, подходят все"}</p>
@@ -83,6 +87,48 @@ export function ColumnView({
       </div>
     </section>
   );
+}
+
+// Ширина колонки: тянется за правый край и хранится в браузере — у каждого координатора свой вид
+const MIN_W = 220;
+const MAX_W = 720;
+const widthKey = (id: number) => `mts.colWidth.${id}`;
+
+function useColumnWidth(id: number): [number | null, (e: React.PointerEvent) => void, () => void] {
+  const [width, setWidth] = useState<number | null>(null);
+  const cur = useRef<number | null>(null);
+  useEffect(() => {
+    try {
+      const v = Number(localStorage.getItem(widthKey(id)));
+      if (v >= MIN_W && v <= MAX_W) setWidth(v);
+    } catch { /* без сохранения — ширина по умолчанию */ }
+  }, [id]);
+  const start = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const col = (e.currentTarget as HTMLElement).parentElement!;
+    const x0 = e.clientX;
+    const w0 = col.getBoundingClientRect().width;
+    document.body.classList.add("is-resizing");
+    const move = (ev: PointerEvent) => {
+      const w = Math.round(Math.min(MAX_W, Math.max(MIN_W, w0 + ev.clientX - x0)));
+      cur.current = w;
+      setWidth(w);
+    };
+    const up = () => {
+      document.body.classList.remove("is-resizing");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      try { if (cur.current) localStorage.setItem(widthKey(id), String(cur.current)); } catch { /* пусто */ }
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const reset = () => {
+    setWidth(null);
+    try { localStorage.removeItem(widthKey(id)); } catch { /* пусто */ }
+  };
+  return [width, start, reset];
 }
 
 // Запал срока: полоса слева показывает, сколько отведённого времени осталось.
