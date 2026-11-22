@@ -23,6 +23,8 @@ def client():
     from app.main import app
     Base.metadata.drop_all(engine)
     with TestClient(app) as c:
+        # все /api/* только после входа — тесты работают под mts1
+        assert c.post("/api/auth/login", json={"login": "mts1", "password": "mts1"}).status_code == 200
         yield c
 
 

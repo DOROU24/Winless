@@ -1128,3 +1128,19 @@ input:focus, select:focus, textarea:focus, input:focus-visible, select:focus-vis
 body.is-resizing, body.is-resizing * { cursor: col-resize !important; user-select: none; }
 .col--collapsed .col__resize { display: none; }
 @media (max-width: 900px) { .col__resize { display: none; } }
+
+/* ==== Вход и пользователь ==== */
+.login { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; background: #f5f6f8; }
+.login__card { width: min(420px, 100%); background: #fff; border-radius: 26px; border-top: 2px solid var(--accent);
+  box-shadow: 0 20px 60px rgba(17, 18, 20, 0.12); padding: 36px 34px 30px; display: grid; gap: 16px; }
+.login__brand { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+.login__brand .top__name { font-size: 20px; }
+.login__card h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; }
+.login__card input { min-height: 44px; font-size: 16px; }
+.login__submit { min-height: 46px; justify-content: center; border-radius: 12px; font-size: 16px; font-weight: 600; margin-top: 4px; }
+.login__hint { font-size: 13px; color: var(--muted); text-align: center; }
+.user-menu { display: inline-flex; align-items: center; gap: 8px; padding-left: 6px; }
+.user-menu__avatar { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: #f2f2f4;
+  color: var(--text); font-weight: 700; font-size: 13px; }
+.user-menu__login { font-size: 14px; color: var(--text-2); }
+@media (max-width: 900px) { .user-menu__login { display: none; } }

@@ -65,6 +65,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, [s.upload]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  if (path.startsWith("/login")) return <>{children}</>;
+
   if (path.startsWith("/wall") || path.startsWith("/itsm")) {
     return (
       <>
@@ -246,8 +248,29 @@ function TopBar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void })
           {s.uploading ? "Загружаю…" : "Загрузить JSON"}
         </button>
         <NotificationsBell />
+        <UserMenu />
       </div>
     </header>
+  );
+}
+
+// Кто вошёл и кнопка «Выйти»
+function UserMenu() {
+  const [login, setLogin] = useState<string | null>(null);
+  useEffect(() => {
+    api.get<{ login: string | null }>("/api/auth/me").then((r) => setLogin(r.login)).catch(() => undefined);
+  }, []);
+  const logout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => undefined);
+    window.location.href = "/login";
+  };
+  if (!login) return null;
+  return (
+    <div className="user-menu">
+      <span className="user-menu__avatar" aria-hidden>{login.slice(-1).toUpperCase()}</span>
+      <span className="user-menu__login">{login}</span>
+      <button className="icon-btn" onClick={logout} aria-label="Выйти" title="Выйти"><Icon name="logout" size={18} /></button>
+    </div>
   );
 }
 

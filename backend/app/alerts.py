@@ -122,8 +122,22 @@ def alert_dict(a: Alert, inc: Incident | None, cols: dict[int, Column], members:
     }
 
 
+def user_column_ids(s: Session) -> set[int] | None:
+    """Колонки досок текущего пользователя. None — пользователь не задан (служебные вызовы и старые тесты)."""
+    from .db import CURRENT_USER
+    uid = CURRENT_USER.get()
+    if uid is None:
+        return None
+    return set(s.execute(select(Column.id).join(Board, Board.id == Column.board_id).where(Board.owner_id == uid)).scalars())
+
+
+def _mine(a: Alert, cols: set[int] | None) -> bool:
+    return cols is None or bool(set(a.column_ids or []) & cols)
+
+
 def list_alerts(s: Session, limit=300) -> list[dict]:
-    rows = list(s.execute(select(Alert).order_by(Alert.id.desc()).limit(limit)).scalars())
+    cols_mine = user_column_ids(s)
+    rows = [a for a in s.execute(select(Alert).order_by(Alert.id.desc())).scalars() if _mine(a, cols_mine)][:limit]
     incs = {i.id: i for i in s.execute(select(Incident).where(Incident.id.in_({a.incident_id for a in rows})))
             .scalars()}
     cols = {c.id: c for c in s.execute(select(Column)).scalars()}
@@ -132,12 +146,15 @@ def list_alerts(s: Session, limit=300) -> list[dict]:
 
 
 def unread_count(s: Session) -> int:
-    return s.execute(select(func.count(Alert.id)).where(Alert.read_at.is_(None))).scalar() or 0
+    cols_mine = user_column_ids(s)
+    return sum(1 for a in s.execute(select(Alert).where(Alert.read_at.is_(None))).scalars() if _mine(a, cols_mine))
 
 
 def mark_read(s: Session, ids: list[int]) -> int:
     """Отметить оповещения прочитанными. Повторная отметка ничего не меняет. Возвращает, сколько отмечено сейчас."""
-    rows = list(s.execute(select(Alert).where(Alert.id.in_(set(ids)), Alert.read_at.is_(None))).scalars()) if ids else []
+    cols_mine = user_column_ids(s)
+    rows = [a for a in s.execute(select(Alert).where(Alert.id.in_(set(ids)), Alert.read_at.is_(None))).scalars()
+            if _mine(a, cols_mine)] if ids else []
     now = utcnow()
     for a in rows:
         a.read_at = now
@@ -148,7 +165,8 @@ def mark_read(s: Session, ids: list[int]) -> int:
 def active_count(s: Session) -> int:
     """Сколько оповещений относится к инцидентам, которые сейчас лежат в колонках с оповещением."""
     members = _memberships(s)
-    return sum(1 for a in s.execute(select(Alert)).scalars() if _in_column(a, members))
+    cols_mine = user_column_ids(s)
+    return sum(1 for a in s.execute(select(Alert)).scalars() if _in_column(a, members) and _mine(a, cols_mine))
 
 
 def due_alerts(s: Session, since: datetime | None, now: datetime | None = None) -> list[dict]:
@@ -164,8 +182,11 @@ def due_alerts(s: Session, since: datetime | None, now: datetime | None = None) 
         return []
     since = max(since, now - timedelta(minutes=30))  # браузер долго спал — не вываливаем всё накопленное
     members = _memberships(s)
+    cols_mine = user_column_ids(s)
     due = []
     for a in s.execute(select(Alert).where(Alert.created_at <= now)).scalars():
+        if not _mine(a, cols_mine):
+            continue
         if since < a.created_at <= now:
             due.append(a)
             continue

@@ -6,7 +6,7 @@ from datetime import timezone
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import delete, func, or_, select
@@ -19,7 +19,8 @@ from .env import load_dotenv
 
 load_dotenv()  # ключ модели и прочие настройки из .env (не перезаписывает переменные окружения)
 
-from .db import (utcnow, AiResult, Alert, AlertMembership, Board, Column, Incident, IncidentEvent, Link, LinkRule,
+from . import auth as auth_mod
+from .db import (CURRENT_USER, utcnow, AiResult, Alert, AlertMembership, Board, Column, Incident, IncidentEvent, Link, LinkRule,
                  RulePreset, SessionLocal, Snapshot, get_session, get_setting, init_db, set_setting)
 from .fields import build_context, field_value, parse_dt, registry
 from .ingest import IngestError, ingest
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI):
     init_db()
     with SessionLocal() as s:
         seed(s)
+        auth_mod.seed_users(s)
         # если ключ модели есть, дозапускаем анализ инцидентов без результата ИИ (загружены до появления ключа)
         latest = s.execute(select(Snapshot.id).order_by(Snapshot.id.desc()).limit(1)).scalar()
     if latest:
@@ -43,7 +45,22 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Пульт координатора", lifespan=lifespan)
+OPEN_PATHS = {"/api/auth/login", "/api/health"}
+
+
+async def auth_guard(request: Request):
+    """Все /api/* только после входа. Пользователь запоминается на время запроса: доски, правила и уведомления — свои."""
+    path = request.url.path
+    if not path.startswith("/api/") or path in OPEN_PATHS:
+        return
+    with SessionLocal() as s:
+        u = auth_mod.user_by_token(s, request.cookies.get(auth_mod.COOKIE))
+    if u is None:
+        raise HTTPException(401, {"message": "Войдите в пульт", "errors": []})
+    CURRENT_USER.set(u.id)
+
+
+app = FastAPI(title="Пульт координатора", lifespan=lifespan, dependencies=[Depends(auth_guard)])
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 DB = Depends(get_session)
@@ -51,6 +68,56 @@ DB = Depends(get_session)
 
 def err(status: int, message: str, errors: list | None = None):
     raise HTTPException(status, {"message": message, "errors": errors or []})
+
+
+def _mine(b: Board | None) -> bool:
+    uid = CURRENT_USER.get()
+    return b is not None and (uid is None or b.owner_id == uid)
+
+
+def _own_board(s: Session, board_id: int) -> Board:
+    """Доска текущего пользователя; чужая — как будто её нет."""
+    b = s.get(Board, board_id)
+    if not _mine(b):
+        err(404, "Доска не найдена")
+    return b
+
+
+def _maybe_board(s: Session, board_id) -> Board | None:
+    b = s.get(Board, board_id) if board_id else None
+    return b if _mine(b) else None
+
+
+# ---- вход ---------------------------------------------------------------------------------
+
+class LoginBody(BaseModel):
+    login: str
+    password: str
+
+
+@app.post("/api/auth/login")
+def auth_login(body: LoginBody, response: Response, s: Session = DB):
+    res = auth_mod.login(s, body.login, body.password)
+    if res is None:
+        err(401, "Неверный логин или пароль")
+    user, token = res
+    auth_mod.ensure_own_board(s, user)
+    response.set_cookie(auth_mod.COOKIE, token, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30, path="/")
+    return {"login": user.login}
+
+
+@app.post("/api/auth/logout")
+def auth_logout(request: Request, response: Response, s: Session = DB):
+    auth_mod.logout(s, request.cookies.get(auth_mod.COOKIE))
+    response.delete_cookie(auth_mod.COOKIE, path="/")
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def auth_me(s: Session = DB):
+    from .db import User
+    u = s.get(User, CURRENT_USER.get())
+    return {"login": u.login if u else None}
 
 
 # ---- служебное ---------------------------------------------------------------------------
@@ -66,8 +133,7 @@ def _after_ingest(s: Session) -> dict:
     ctx = build_context(s)
     n_links = recompute_auto_links(s, ctx)
     new_alerts = alerts_mod.evaluate_alerts(s, ctx)
-    active_id = get_setting(s, "active_board_id")
-    board = s.get(Board, active_id) if active_id else None
+    board = _maybe_board(s, get_setting(s, "active_board_id"))
     counts = column_counts(s, board, ctx) if board else []
     return {"autoLinks": n_links, "newAlerts": len(new_alerts), "columns": counts}
 
@@ -140,8 +206,7 @@ def get_incident(incident_id: str, board_id: int | None = None, s: Session = DB)
                        .order_by(IncidentEvent.id.desc())).scalars()
     # «почему здесь» — по колонкам выбранной (или активной) доски
     why = []
-    bid = board_id or get_setting(s, "active_board_id")
-    board = s.get(Board, bid) if bid else None
+    board = _maybe_board(s, board_id or get_setting(s, "active_board_id"))
     if board:
         cols = board_columns(s, board.id)
         placed = place(board, cols, [inc], reg, ctx)
@@ -240,7 +305,7 @@ def _preview(s: Session, rule, limit=20, hide_disappeared=True, board: Board | N
 
 @app.post("/api/rules/preview")
 def rules_preview(body: RuleBody, s: Session = DB):
-    board = s.get(Board, body.boardId) if body.boardId else None
+    board = _maybe_board(s, body.boardId)
     return _preview(s, body.rule, body.limit, board=board, column_id=body.columnId)
 
 
@@ -258,7 +323,10 @@ class BoardBody(BaseModel):
 
 @app.get("/api/boards")
 def list_boards(s: Session = DB):
-    rows = s.execute(select(Board).order_by(Board.position, Board.id)).scalars()
+    q = select(Board).order_by(Board.position, Board.id)
+    if CURRENT_USER.get() is not None:
+        q = q.where(Board.owner_id == CURRENT_USER.get())
+    rows = s.execute(q).scalars()
     return {"boards": [board_dict(b, board_columns(s, b.id)) for b in rows],
             "activeBoardId": get_setting(s, "active_board_id")}
 
@@ -294,13 +362,13 @@ def board_from_template(body: FromTemplate, s: Session = DB):
 
 @app.get("/api/boards/{board_id}")
 def get_board(board_id: int, s: Session = DB):
-    b = s.get(Board, board_id) or err(404, "Доска не найдена")
+    b = _own_board(s, board_id)
     return board_dict(b, board_columns(s, b.id))
 
 
 @app.patch("/api/boards/{board_id}")
 def patch_board(board_id: int, body: BoardBody, s: Session = DB):
-    b = s.get(Board, board_id) or err(404, "Доска не найдена")
+    b = _own_board(s, board_id)
     if body.name is not None:
         b.name = body.name.strip() or b.name
     if body.mode in ("all", "first"):
@@ -352,15 +420,15 @@ def _clean_wall_layout(raw: dict | None) -> dict | None:
 
 @app.delete("/api/boards/{board_id}")
 def delete_board(board_id: int, s: Session = DB):
-    b = s.get(Board, board_id) or err(404, "Доска не найдена")
-    if s.execute(select(func.count(Board.id))).scalar() <= 1:
+    b = _own_board(s, board_id)
+    if s.execute(select(func.count(Board.id)).where(Board.owner_id == b.owner_id)).scalar() <= 1:
         err(400, "Нельзя удалить последнюю доску")
     col_ids = [c.id for c in board_columns(s, b.id)]
     s.execute(delete(AlertMembership).where(AlertMembership.column_id.in_(col_ids)))
     s.execute(delete(Column).where(Column.board_id == b.id))
     s.delete(b)
     if get_setting(s, "active_board_id") == board_id:
-        nxt = s.execute(select(Board.id).where(Board.id != board_id).order_by(Board.position)).scalar()
+        nxt = s.execute(select(Board.id).where(Board.id != board_id, Board.owner_id == b.owner_id).order_by(Board.position)).scalar()
         set_setting(s, "active_board_id", nxt)
     s.commit()
     return {"ok": True}
@@ -368,7 +436,7 @@ def delete_board(board_id: int, s: Session = DB):
 
 @app.post("/api/boards/{board_id}/duplicate")
 def dup_board(board_id: int, s: Session = DB):
-    b = s.get(Board, board_id) or err(404, "Доска не найдена")
+    b = _own_board(s, board_id)
     nb = duplicate_board(s, b)
     set_setting(s, "active_board_id", nb.id)
     s.flush()
@@ -379,7 +447,7 @@ def dup_board(board_id: int, s: Session = DB):
 
 @app.post("/api/boards/{board_id}/reset")
 def reset_board(board_id: int, body: FromTemplate, s: Session = DB):
-    b = s.get(Board, board_id) or err(404, "Доска не найдена")
+    b = _own_board(s, board_id)
     if body.template not in TEMPLATES:
         err(400, f"Нет шаблона «{body.template}»")
     col_ids = [c.id for c in board_columns(s, b.id)]
@@ -397,7 +465,7 @@ def reset_board(board_id: int, body: FromTemplate, s: Session = DB):
 
 @app.get("/api/boards/{board_id}/layout")
 def board_layout(board_id: int, s: Session = DB):
-    b = s.get(Board, board_id) or err(404, "Доска не найдена")
+    b = _own_board(s, board_id)
     return layout(s, b)
 
 
@@ -468,12 +536,13 @@ def _apply_column(c: Column, body: ColumnBody, s: Session, fields_set: set[str])
 
 @app.get("/api/boards/{board_id}/columns")
 def list_columns(board_id: int, s: Session = DB):
+    _own_board(s, board_id)
     return [column_dict(c) for c in board_columns(s, board_id)]
 
 
 @app.post("/api/boards/{board_id}/columns")
 def create_column(board_id: int, body: ColumnBody, s: Session = DB):
-    b = s.get(Board, board_id) or err(404, "Доска не найдена")
+    b = _own_board(s, board_id)
     pos = len(board_columns(s, b.id))
     c = Column(board_id=b.id, position=pos, name="Новая колонка", color=PALETTE["info"], rule=None,
                card_fields=list(DEFAULT_CARD_FIELDS), level="info", alert="off")
@@ -489,6 +558,7 @@ def create_column(board_id: int, body: ColumnBody, s: Session = DB):
 
 @app.patch("/api/boards/{board_id}/columns/{column_id}")
 def patch_column(board_id: int, column_id: int, body: ColumnBody, s: Session = DB):
+    _own_board(s, board_id)
     c = s.get(Column, column_id)
     if c is None or c.board_id != board_id:
         err(404, "Колонка не найдена")
@@ -505,6 +575,7 @@ def patch_column(board_id: int, column_id: int, body: ColumnBody, s: Session = D
 
 @app.delete("/api/boards/{board_id}/columns/{column_id}")
 def delete_column(board_id: int, column_id: int, s: Session = DB):
+    _own_board(s, board_id)
     c = s.get(Column, column_id)
     if c is None or c.board_id != board_id:
         err(404, "Колонка не найдена")
@@ -530,7 +601,10 @@ def list_presets(with_counts: bool = True, s: Session = DB):
     reg = registry(ctx)
     incidents = [i for i in load_incidents(s) if not i.disappeared] if with_counts else []
     out = []
+    uid = CURRENT_USER.get()
     for p in s.execute(select(RulePreset).order_by(RulePreset.id)).scalars():
+        if p.custom and uid is not None and p.owner_id not in (None, uid):
+            continue
         missing = missing_fields(p.rule, reg)
         unavailable = [reg[f].label for f in rule_fields(p.rule) if f in reg and not reg[f].available]
         no_data = bool(missing) or bool(unavailable)
@@ -596,6 +670,8 @@ def create_preset(body: PresetBody, s: Session = DB):
 
 def _custom_preset(s: Session, preset_id: int) -> RulePreset:
     p = s.get(RulePreset, preset_id) or err(404, "Правило не найдено")
+    if p.custom and CURRENT_USER.get() is not None and p.owner_id not in (None, CURRENT_USER.get()):
+        err(404, "Правило не найдено")
     if not p.custom:
         err(403, "Встроенные правила каталога не меняются. Добавьте правило в колонку и меняйте его там")
     return p
@@ -763,8 +839,7 @@ def graph(link_type: str | None = None, source: str | None = None, active_only: 
     reg = registry(ctx)
     incidents = load_incidents(s)
     by_id = {i.id: i for i in incidents}
-    bid = get_setting(s, "active_board_id")
-    board = s.get(Board, bid) if bid else None
+    board = _maybe_board(s, get_setting(s, "active_board_id"))
     levels = incident_levels(s, board, ctx, reg, incidents) if board else {}
     q = select(Link)
     if link_type:
@@ -896,7 +971,7 @@ def patch_settings(body: SettingsBody, s: Session = DB):
     if body.itsmUrlTemplate is not None:
         set_setting(s, "itsm_url_template", body.itsmUrlTemplate.strip() or "/itsm/{id}")
     if body.activeBoardId is not None:
-        if s.get(Board, body.activeBoardId) is None:
+        if _maybe_board(s, body.activeBoardId) is None:
             err(404, "Доска не найдена")
         set_setting(s, "active_board_id", body.activeBoardId)
     if body.assistantMinSimilar is not None:

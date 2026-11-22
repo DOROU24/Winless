@@ -244,6 +244,10 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   } catch {
     throw new ApiError({ message: "Сервер не отвечает. Проверьте, что бэкенд запущен на порту 8000.", errors: [] });
   }
+  // сессии нет или она истекла — на страницу входа, потом вернём обратно
+  if (r.status === 401 && typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+    window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
+  }
   if (!r.ok) {
     let detail: ApiErrorBody = { message: `Ошибка ${r.status}`, errors: [] };
     try {

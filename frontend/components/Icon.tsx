@@ -19,6 +19,7 @@ const P: Record<string, string> = {
   chevronLeft: "M15 18l-6-6 6-6",
   panel: "M3 4h18v16H3zM9 4v16",
   menu: "M4 7h16M4 12h16M4 17h16",
+  logout: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9",
   sidebarCollapse: "M4 4h16v16H4zM9 4v16M16 10l-2 2 2 2",
   sidebarExpand: "M4 4h16v16H4zM9 4v16M14 10l2 2-2 2",
   chevronDown: "M6 9l6 6 6-6",

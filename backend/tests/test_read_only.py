@@ -93,7 +93,8 @@ def test_no_endpoint_except_upload_changes_incidents(client):
     upload(client, "02_new_critical.json")
     client.get("/api/alerts/due")
 
-    routes = [(m, p) for m, p in all_routes() if not (m == "POST" and p == "/api/snapshots")]
+    # вход и выход не трогают инциденты; выход здесь разлогинил бы тест посреди обхода
+    routes = [(m, p) for m, p in all_routes() if not (m == "POST" and p == "/api/snapshots") and not p.startswith("/api/auth/")]
     # удаления в конце, чтобы остальным эндпоинтам было на чём работать
     routes.sort(key=lambda mp: (mp[0] == "DELETE", mp[1]))
     assert len(routes) > 20, "маршруты не найдены"

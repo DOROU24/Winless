@@ -141,6 +141,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    if (typeof window !== "undefined" && window.location.pathname.startsWith("/login")) return; // до входа ничего не грузим
     audio.current = typeof Audio !== "undefined" ? new Audio("/alert.wav") : null;
     (async () => {
       try {

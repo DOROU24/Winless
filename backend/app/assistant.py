@@ -305,7 +305,10 @@ class Tools:
 
     def _board(self, board_id=None) -> Board | None:
         bid = board_id or self.board_id
-        return self.s.get(Board, bid) if bid else None
+        b = self.s.get(Board, bid) if bid else None
+        from .db import CURRENT_USER
+        uid = CURRENT_USER.get()
+        return b if b is not None and (uid is None or b.owner_id == uid) else None
 
     def history_period(self) -> dict:
         snaps = list(self.snaps.values())
@@ -352,7 +355,11 @@ class Tools:
 
     def t_get_board(self, boardId: int | None = None):
         b = self._board(boardId)
-        boards = [{"id": x.id, "name": x.name} for x in self.s.execute(select(Board).order_by(Board.position))
+        from .db import CURRENT_USER
+        q = select(Board).order_by(Board.position)
+        if CURRENT_USER.get() is not None:
+            q = q.where(Board.owner_id == CURRENT_USER.get())
+        boards = [{"id": x.id, "name": x.name} for x in self.s.execute(q)
                   .scalars()]
         if b is None:
             return {"board": None, "boards": boards}

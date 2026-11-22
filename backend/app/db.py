@@ -1,6 +1,8 @@
 """Подключение к SQLite и модели SQLAlchemy."""
 from __future__ import annotations
 
+from contextvars import ContextVar
+
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -85,9 +87,30 @@ class FieldCatalog(Base):
     values: Mapped[list] = mapped_column(JSON, default=list)  # частые значения для выпадающего списка
 
 
+# Кто сейчас делает запрос (ставится проверкой входа). Новые доски и свои правила получают его как владельца,
+# а «активная доска» хранится у каждого пользователя своя.
+CURRENT_USER: ContextVar[int | None] = ContextVar("current_user", default=None)
+
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    login: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(256))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+    token: Mapped[str] = mapped_column(String(128), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Board(Base):
     __tablename__ = "boards"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=lambda: CURRENT_USER.get())
     name: Mapped[str] = mapped_column(String(255))
     position: Mapped[int] = mapped_column(Integer, default=0)
     mode: Mapped[str] = mapped_column(String(16), default="all")  # all | first
@@ -123,6 +146,7 @@ class Column(Base):
 class RulePreset(Base):
     __tablename__ = "rule_presets"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)  # номер правила из каталога
+    owner_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=lambda: CURRENT_USER.get())  # у своих правил
     name: Mapped[str] = mapped_column(String(255))
     origin: Mapped[str] = mapped_column(String(64))
     description: Mapped[str] = mapped_column(Text, default="")
@@ -218,7 +242,8 @@ def migrate(eng) -> None:
             conn.execute(text("DROP TABLE acks"))
         # новые колонки в старых базах
         for table, col, ddl in (("boards", "wall_layout", "JSON"), ("rule_presets", "custom", "BOOLEAN DEFAULT 0"),
-                                ("rule_presets", "created_at", "DATETIME")):
+                                ("rule_presets", "created_at", "DATETIME"), ("boards", "owner_id", "INTEGER"),
+                                ("rule_presets", "owner_id", "INTEGER")):
             if col not in {c["name"] for c in insp.get_columns(table)}:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
         alert_cols = {c["name"] for c in insp.get_columns("alerts")}
@@ -247,12 +272,21 @@ def get_session():
 
 # ---- настройки -------------------------------------------------------------
 
+PER_USER_SETTINGS = {"active_board_id"}
+
+
+def _key(key: str) -> str:
+    uid = CURRENT_USER.get()
+    return f"{key}:{uid}" if key in PER_USER_SETTINGS and uid is not None else key
+
+
 def get_setting(s: Session, key: str, default=None):
-    row = s.get(Setting, key)
+    row = s.get(Setting, _key(key))
     return default if row is None else row.value
 
 
 def set_setting(s: Session, key: str, value) -> None:
+    key = _key(key)
     row = s.get(Setting, key)
     if row is None:
         s.add(Setting(key=key, value=value))
