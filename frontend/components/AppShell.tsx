@@ -77,8 +77,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className={`shell ${narrow ? "shell--narrow" : ""}`}>
-      <TopBar />
-      <Sidebar narrow={narrow} onToggle={toggleNarrow} />
+      <TopBar narrow={narrow} onToggle={toggleNarrow} />
+      <Sidebar narrow={narrow} />
       <main className="page">{children}</main>
       {s.openIncidentId && <IncidentDrawer id={s.openIncidentId} />}
       <Popups />
@@ -96,7 +96,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Sidebar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void }) {
+function Sidebar({ narrow }: { narrow: boolean }) {
   const path = usePathname();
   const router = useRouter();
   const s = useStore();
@@ -104,17 +104,6 @@ function Sidebar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void }
 
   return (
     <aside className="side" id="side-panel">
-      <div className="side__brand">
-        <Link href="/" className="top__brand" title="КООРАДАР">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className="top__logo" src="/brand/logo.svg" alt="МТС" width={36} height={36} />
-          <span className="top__name">КООРАДАР</span>
-        </Link>
-        <button className="top__side-toggle" onClick={onToggle} aria-expanded={!narrow} aria-controls="side-panel"
-          aria-label={narrow ? "Развернуть панель" : "Свернуть панель"} title={narrow ? "Развернуть панель" : "Свернуть панель"}>
-          <Icon name={narrow ? "sidebarExpand" : "sidebarCollapse"} size={20} />
-        </button>
-      </div>
       <nav className="side__nav" aria-label="Разделы">
         {NAV.map((n) => (
           <Link key={n.href} href={n.href} className={`side__link ${path === n.href ? "is-active" : ""}`} title={narrow ? n.label : undefined}>
@@ -220,11 +209,20 @@ export function NewBoardDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-function TopBar() {
+function TopBar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void }) {
   const s = useStore();
   const input = useRef<HTMLInputElement>(null);
   return (
     <header className="top">
+      <button className="top__side-toggle" onClick={onToggle} aria-expanded={!narrow} aria-controls="side-panel"
+        aria-label={narrow ? "Развернуть панель" : "Свернуть панель"} title={narrow ? "Развернуть панель" : "Свернуть панель"}>
+        <Icon name={narrow ? "sidebarExpand" : "sidebarCollapse"} size={20} />
+      </button>
+      <Link href="/" className="top__brand">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="top__logo" src="/brand/logo.svg" alt="МТС" width={36} height={36} />
+        <span className="top__name">КООРАДАР</span>
+      </Link>
       <div className="top__actions">
         {s.ai?.enabled && (s.ai.running || s.ai.queuedUploads > 0) && (
           <span className="chip chip--ai" title="Языковая модель анализирует новые и изменённые инциденты">

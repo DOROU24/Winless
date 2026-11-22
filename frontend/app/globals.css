@@ -1027,3 +1027,61 @@ input:focus, select:focus, textarea:focus, input:focus-visible, select:focus-vis
 .side__brand .top__brand { gap: 10px; }
 .side__brand .top__logo { width: 32px; height: 32px; }
 .side__brand .top__name { font-size: 16px; letter-spacing: 0; text-overflow: clip; }
+
+/* ==== Логотип в левой части шапки, белая левая панель ==== */
+.top__brand { gap: 14px; }
+.top .top__logo { width: 36px; height: 36px; }
+.top .top__name { font-size: 20px; }
+.side { background: #fff; border-right: 1px solid #ececef; }
+.side__brand { justify-content: flex-end; padding: 0 2px; border-bottom: 1.5px dotted var(--dot-line); margin: 0 -10px 10px; padding: 0 12px; }
+.side__link:hover, .side__board:hover { background: #f5f5f6; }
+.side__link.is-active, .side__board.is-active { background: #f2f2f4; border-color: transparent; box-shadow: none; }
+@media (min-width: 901px) {
+  .shell--narrow .side__brand { flex-direction: row; justify-content: center; height: 72px; padding: 0; margin: 0 -10px 10px; }
+}
+@media (max-width: 900px) {
+  .shell { grid-template-areas: "top" "side" "page"; }
+  .side__brand { display: none; }
+}
+/* линия под кнопкой сворачивания всегда на уровне нижней линии шапки */
+@media (min-width: 901px) {
+  .side, .shell--narrow .side { padding-top: 0; }
+  .side__brand, .shell--narrow .side__brand { height: 72px; box-sizing: border-box; margin-top: 0; }
+}
+/* выравнивание по общим осям:
+   - значок «свернуть» стоит на одной вертикали со значками разделов (центр 29 px от края панели);
+   - в свёрнутом виде — по центру, как и значки;
+   - логотип в шапке начинается там же, где заголовок доски */
+@media (min-width: 901px) {
+  .side__brand { justify-content: flex-start; padding: 0 0 0 12px; margin: 0 -10px 10px; }
+  .shell--narrow .side__brand { justify-content: center; padding: 0; }
+  .top { padding-left: 34px; }
+}
+
+/* ==== Как в Jira: шапка во всю ширину, кнопка панели слева от логотипа ==== */
+.shell { grid-template-areas: "top top" "side page"; }
+.top { grid-area: top; gap: 12px; border-bottom: 1px solid #ececef; }
+.side { padding-top: 12px; }
+.side__brand { display: none; }
+@media (min-width: 901px) {
+  /* центр значка кнопки — на одной вертикали со значками разделов (30 px от края) */
+  .top { padding-left: 12px; }
+  .side, .shell--narrow .side { padding-top: 12px; }
+  .top__side-toggle { margin-left: 0; width: 36px; height: 36px; }
+}
+.top__brand { margin-left: 4px; }
+.top__side-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 900px) {
+  .shell { grid-template-areas: "top" "side" "page"; }
+}
+@media (min-width: 901px) { .shell--narrow .top { padding-left: 14px; } } /* в свёрнутом виде значки по центру 64 px — кнопка тоже */
+/* свёрнутая панель облегает значки: плашка 36×36 и по 8 px с боков — 52 px вместо 64 */
+@media (min-width: 901px) {
+  .shell--narrow { grid-template-columns: 52px 1fr; }
+  .shell--narrow .side { padding: 12px 8px 10px; }
+  .shell--narrow .side__link, .shell--narrow .side__board { width: 36px; height: 36px; min-height: 36px; padding: 0; justify-content: center; }
+  .shell--narrow .side__head { width: 36px; justify-content: center; }
+  .shell--narrow .side__head .icon-btn { width: 28px; height: 28px; }
+  .shell--narrow .top { padding-left: 8px; } /* центр значка кнопки = центр значков панели (26 px) */
+}
+.side, .side__section { overflow-x: hidden; }
