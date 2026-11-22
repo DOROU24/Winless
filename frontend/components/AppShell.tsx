@@ -264,7 +264,9 @@ function Popups() {
         <div key={a.id} className={`popup popup--${a.level}`}>
           <div className="popup__head">
             <span className="popup__level">{LEVEL_LABEL[a.level]}</span>
-            <span className="popup__col">{a.columns.join(", ") || a.column}</span>
+            <span className="popup__col" title={[...new Set(a.columns)].join(", ") || a.column}>
+              {[...new Set(a.columns)].join(", ") || a.column}
+            </span>
             <button className="icon-btn" onClick={() => s.dismissPopup(a.id)} aria-label="Закрыть окно">
               <Icon name="close" size={14} />
             </button>

@@ -178,6 +178,22 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   // Закрытие окна только убирает его с экрана, в базу ничего не пишется.
   const dismissPopup = useCallback((id: number) => setPopups((p) => p.filter((x) => x.id !== id)), []);
 
+  // Окно оповещения само скрывается через 6 секунд после появления
+  const POPUP_MS = 6000;
+  const popupTimers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  useEffect(() => {
+    const timers = popupTimers.current;
+    for (const p of popups) {
+      if (!timers.has(p.id)) timers.set(p.id, setTimeout(() => {
+        timers.delete(p.id);
+        setPopups((all) => all.filter((x) => x.id !== p.id));
+      }, POPUP_MS));
+    }
+    for (const [id, t] of timers) {
+      if (!popups.some((p) => p.id === id)) { clearTimeout(t); timers.delete(id); }
+    }
+  }, [popups]);
+
 
 
   const fieldMap = useMemo(() => Object.fromEntries(fields.map((f) => [f.key, f])), [fields]);

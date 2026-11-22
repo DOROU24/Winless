@@ -914,3 +914,16 @@ input:focus, select:focus, textarea:focus, input:focus-visible, select:focus-vis
 .card__title { overflow-wrap: anywhere; }
 .card__open { overflow: hidden; }
 .card, .card-wrap { width: 100%; }
+
+/* всплывающие оповещения: длинный список колонок обрезается, крестик всегда виден */
+.popup { min-width: 0; position: relative; overflow: hidden; }
+.popup__head { min-width: 0; }
+.popup__col { min-width: 0; }
+.popup__head .icon-btn { flex: none; color: var(--text-2); }
+.popup__head .icon-btn:hover { background: var(--raise); color: var(--text); }
+/* полоска внизу показывает, сколько осталось до автоскрытия */
+.popup::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: currentColor;
+  color: var(--info); opacity: 0.35; transform-origin: left; animation: popup-timer 6s linear forwards; }
+.popup--critical::after { color: var(--crit); }
+.popup--elevated::after { color: var(--elev); }
+@keyframes popup-timer { from { transform: scaleX(1); } to { transform: scaleX(0); } }

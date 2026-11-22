@@ -104,7 +104,11 @@ export default function GraphPage() {
         layout: (known && !anyKnownNew
           ? { name: "preset", fit: !view.current }
           : { name: "cose", animate: false, randomize: !anyKnown, nodeRepulsion: () => 9000, idealEdgeLength: () => 60, padding: 30 }) as never,
-        wheelSensitivity: 0.3,
+        // Было 0.3: один щелчок колеса давал ~1,5% зума, увеличение тянулось бесконечно.
+        // 4 — около 12–20% за щелчок, как в картах; на тачпаде шаг пропорционально мельче.
+        wheelSensitivity: 4,
+        minZoom: 0.15,
+        maxZoom: 4,
       });
       if (known && view.current) {
         inst.zoom(view.current.zoom);
