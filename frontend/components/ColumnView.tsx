@@ -7,18 +7,23 @@ import type { CardData, LayoutColumn } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { fmtDuration, fmtValue, LEVEL_LABEL } from "@/lib/format";
 import { Icon } from "./Icon";
+import { blinkOf, freshFirst, isFresh, isStuck, newLabel, useNow, type BlinkOpts } from "@/lib/attention";
 
 export function ColumnView({
   column,
   onEdit,
   onToggle,
+  blink = blinkOf(null),
 }: {
+  blink?: BlinkOpts;
   column: LayoutColumn;
   onEdit: () => void;
   onToggle: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: column.id });
   const [width, startResize, resetWidth] = useColumnWidth(column.id);
+  const now = useNow();
+  const empty = column.total === 0 && column.ruleErrors.length === 0;
   const style = {
     transform: CSS.Translate.toString(transform),
     transition,
@@ -38,7 +43,8 @@ export function ColumnView({
   }
 
   return (
-    <section ref={setNodeRef} style={style} className={`col col--${column.level} ${isDragging ? "is-dragging" : ""}`}
+    <section ref={setNodeRef} style={empty ? { ...style, flexBasis: undefined } : style}
+      className={`col col--${column.level} ${empty ? "col--empty" : ""} ${isDragging ? "is-dragging" : ""}`}
       aria-label={`${column.name}: ${column.total}`}>
       <header className="col__head">
         <button className="col__grip" {...attributes} {...listeners} aria-label="Перетащить колонку" title="Перетащить колонку">
@@ -72,8 +78,8 @@ export function ColumnView({
         {column.cards.length === 0 && (
           <p className="col__empty">{column.rule ? "Сейчас ничего не подходит" : "Правила нет, подходят все"}</p>
         )}
-        {column.cards.map((c) => (
-          <Card key={c.id} card={c} fields={column.cardFields} />
+        {freshFirst(column.cards, now).map((c) => (
+          <Card key={c.id} card={c} fields={column.cardFields} now={now} stuck={isStuck(c, column.level, blink) ? blink.blink : null} />
         ))}
         {column.hidden > 0 && (
           <button className="col__more" onClick={onEdit}>
@@ -139,20 +145,24 @@ export function Fuse({ pct, overdue }: { pct: number | null; overdue: boolean })
   );
 }
 
-export function Card({ card, fields }: { card: CardData; fields: string[] }) {
+export function Card({ card, fields, now = Date.now(), stuck = null }: {
+  card: CardData; fields: string[]; now?: number;
+  stuck?: "strong" | "soft" | null; // мигает: критическую задачу долго не берут в работу
+}) {
   const s = useStore();
   const [open, setOpen] = useState(false);
   const shown = fields.filter((f) => f !== "id");
   const members = card.waveMembers ?? [];
   return (
     <div className="card-wrap">
-    <article className={`card ${members.length ? "card--wave" : ""}`}>
+    <article className={`card ${members.length ? "card--wave" : ""} ${isFresh(card, now) ? "is-fresh" : ""} ${stuck ? `is-stuck is-stuck--${stuck}` : ""}`}>
       <Fuse pct={card.deadlineLeftPct} overdue={card.overdue} />
       <button className="card__open" onClick={() => s.openIncident(card.id)} aria-label={`Открыть ${card.id}`}>
         <div className="card__top">
           <span className="mono card__id">{card.id}</span>
           {card.priorityId !== null && <span className={`prio prio--${card.priorityId}`}>{card.priority}</span>}
-          {card.isNew && <span className="tag tag--new">новый</span>}
+          {card.isNew && <span className="tag tag--new">{newLabel(card, now)}</span>}
+          {stuck && card.idleMin != null && <span className="tag tag--stuck">не взят {Math.floor(card.idleMin)} мин</span>}
           {card.disappeared && <span className="tag">пропал</span>}
           {card.wave && <span className="tag tag--wave" title={`Волна сбоя: «${card.wave.title}»`}>волна · {card.wave.size}</span>}
           {card.priorityUnderestimated && <span className="tag tag--warn" title="ИИ оценивает приоритет выше текущего">приоритет занижен?</span>}
@@ -196,7 +206,7 @@ export function Card({ card, fields }: { card: CardData; fields: string[] }) {
         </button>
         {open && (
           <div className="wave__list">
-            {members.map((m) => <Card key={m.id} card={m} fields={fields} />)}
+            {members.map((m) => <Card key={m.id} card={m} fields={fields} now={now} />)}
           </div>
         )}
       </div>

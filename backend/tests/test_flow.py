@@ -16,7 +16,7 @@ def set_now(client, when=DEMO_NOW):
 
 
 class Browser:
-    """Открытый пульт: опрашивает /api/alerts/due со временем своего прошлого опроса."""
+    """Открытая вкладка: опрашивает /api/alerts/due со временем своего прошлого опроса."""
     def __init__(self, client):
         self.client = client
         self.since = client.get("/api/alerts/due").json()["now"]
@@ -715,7 +715,7 @@ def test_alerts_read_mark_and_unread_count(client):
 
 
 def test_popups_reach_every_open_browser(client):
-    """Окно оповещения получает каждый открытый пульт, а не только тот, что загрузил файл и опросил первым."""
+    """Окно оповещения получает каждая открытая вкладка, а не только та, что загрузил файл и опросил первым."""
     ids = demo_ids()
     upload(client, "00_history.json")
     upload(client, "01_now.json")

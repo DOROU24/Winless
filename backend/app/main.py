@@ -56,11 +56,11 @@ async def auth_guard(request: Request):
     with SessionLocal() as s:
         u = auth_mod.user_by_token(s, request.cookies.get(auth_mod.COOKIE))
     if u is None:
-        raise HTTPException(401, {"message": "Войдите в пульт", "errors": []})
+        raise HTTPException(401, {"message": "Войдите в КООРАДАР", "errors": []})
     CURRENT_USER.set(u.id)
 
 
-app = FastAPI(title="Пульт координатора", lifespan=lifespan, dependencies=[Depends(auth_guard)])
+app = FastAPI(title="КООРАДАР", lifespan=lifespan, dependencies=[Depends(auth_guard)])
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 DB = Depends(get_session)
@@ -414,8 +414,20 @@ def _clean_wall_layout(raw: dict | None) -> dict | None:
             "hidden": bool(t.get("hidden", False)), "showCards": bool(t.get("showCards", False)),
             "maxCards": int(num(t.get("maxCards"), 1, 30, 6)),
         }
+    def pick(v, allowed, default):
+        return v if v in allowed else default
+
     return {"scale": round(num(raw.get("scale"), 0.6, 2.0, 1.0), 2), "showClock": bool(raw.get("showClock", True)),
-            "showTitle": bool(raw.get("showTitle", True)), "tiles": tiles}
+            "showTitle": bool(raw.get("showTitle", True)), "tiles": tiles,
+            # порядок плиток и задач на экране без рук (значения по умолчанию — как просили эксперты)
+            "tileOrder": pick(raw.get("tileOrder"), ("fresh", "priority", "layout"), "fresh"),
+            "cardOrder": pick(raw.get("cardOrder"), ("fresh", "priority", "column"), "fresh"),
+            "emptyTiles": pick(raw.get("emptyTiles"), ("end", "hide", "keep"), "end"),
+            "freshMin": int(num(raw.get("freshMin"), 0, 120, 15)),
+            "showSummary": bool(raw.get("showSummary", True)),
+            # мигание критической задачи, которую не взяли в работу дольше stuckMin минут (0 — выключено)
+            "stuckMin": int(num(raw.get("stuckMin"), 0, 240, 10)),
+            "blink": pick(raw.get("blink"), ("strong", "soft"), "strong")}
 
 
 @app.delete("/api/boards/{board_id}")
@@ -728,7 +740,7 @@ def read_alerts(body: ReadBody, s: Session = DB):
 
 @app.get("/api/alerts/due")
 def get_due_alerts(since: str | None = None, s: Session = DB):
-    """Опрашивается каждым открытым пультом: пересчитывает оповещения (правила по времени идут и без загрузок)
+    """Опрашивается каждой открытой вкладкой КООРАДАРа: пересчитывает оповещения (правила по времени идут и без загрузок)
     и отдаёт сработавшие после since — времени прошлого опроса этого браузера. Ответ несёт now — следующий since."""
     from .db import utcnow
     alerts_mod.evaluate_alerts(s)
@@ -739,8 +751,9 @@ def get_due_alerts(since: str | None = None, s: Session = DB):
         start = start.astimezone(timezone.utc).replace(tzinfo=None)
     due = alerts_mod.due_alerts(s, start, now)
     from .llm.pipeline import worker
+    latest = s.execute(select(Snapshot.id).order_by(Snapshot.id.desc()).limit(1)).scalar()
     return {"due": due, "active": alerts_mod.active_count(s), "unread": alerts_mod.unread_count(s),
-            "now": now.isoformat() + "Z", "ai": worker.view()}
+            "now": now.isoformat() + "Z", "ai": worker.view(), "snapshotId": latest}
 
 
 # ---- связи ----------------------------------------------------------------------------------

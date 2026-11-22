@@ -6,11 +6,22 @@ import { useStore } from "@/lib/store";
 import { fmtDuration, LEVEL_LABEL } from "@/lib/format";
 import { Fuse } from "@/components/ColumnView";
 import { Icon } from "@/components/Icon";
+import { blinkOf, isFresh, isStuck, newLabel, orderCards, orderTiles, useNow, type BlinkOpts } from "@/lib/attention";
 
 // Экран на стене: колонки доски — плитки на сетке 12 × N. В обычном режиме без кнопок.
 // В режиме настройки плитки двигаются, растягиваются, скрываются; раскладка хранится в настройках доски.
 
 const COLS = 12;
+
+/** Настройки экрана без рук по умолчанию: плитки по свежести, затем по приоритету; пустые — в конце. */
+const WALL_DEFAULTS = { tileOrder: "fresh", cardOrder: "fresh", emptyTiles: "end", freshMin: 15, showSummary: true } as const;
+type WallOpts = { tileOrder: NonNullable<WallLayout["tileOrder"]>; cardOrder: NonNullable<WallLayout["cardOrder"]>;
+  emptyTiles: NonNullable<WallLayout["emptyTiles"]>; freshMin: number; showSummary: boolean };
+const optsOf = (w: WallLayout): WallOpts => ({
+  tileOrder: w.tileOrder ?? WALL_DEFAULTS.tileOrder, cardOrder: w.cardOrder ?? WALL_DEFAULTS.cardOrder,
+  emptyTiles: w.emptyTiles ?? WALL_DEFAULTS.emptyTiles, freshMin: w.freshMin ?? WALL_DEFAULTS.freshMin,
+  showSummary: w.showSummary ?? WALL_DEFAULTS.showSummary,
+});
 const ROW_PX = 44; // высота строки сетки при масштабе 1
 const GAP_PX = 16;
 
@@ -103,6 +114,14 @@ export default function WallPage() {
   const scale = wall.scale;
   const visible = layout.columns.filter((c) => !wall.tiles[c.id]?.hidden);
   const hidden = layout.columns.filter((c) => wall.tiles[c.id]?.hidden);
+  // В обычном режиме экран раскладывается сам: колонки с задачами — плитками в порядке раскладки,
+  // пустые — короткой строкой в самом конце. В режиме настройки — точные места плиток.
+  const byPlace = (a: LayoutColumn, b: LayoutColumn) =>
+    (wall.tiles[a.id].y - wall.tiles[b.id].y) || (wall.tiles[a.id].x - wall.tiles[b.id].x);
+  const o = optsOf(wall);
+  const filled = o.emptyTiles === "keep" ? visible : visible.filter((c) => c.total > 0);
+  const live = editing ? visible : orderTiles(filled, o.tileOrder, byPlace);
+  const empty = editing || o.emptyTiles !== "end" ? [] : visible.filter((c) => c.total === 0).sort(byPlace);
 
   return (
     <div className={`wall ${editing ? "is-editing" : ""}`} style={{ "--wall-scale": scale } as React.CSSProperties}>
@@ -122,6 +141,55 @@ export default function WallPage() {
           <label className="check check--inline">
             <input type="checkbox" checked={wall.showClock} onChange={(e) => update({ showClock: e.target.checked })} />
             <span>Часы</span>
+          </label>
+          <label className="wall-bar__item">
+            <span>Плитки</span>
+            <select value={o.tileOrder} onChange={(e) => update({ tileOrder: e.target.value as WallOpts["tileOrder"] })}>
+              <option value="fresh">Сначала свежие, затем по приоритету</option>
+              <option value="priority">Сначала по приоритету, затем свежие</option>
+              <option value="layout">Как расставлены</option>
+            </select>
+          </label>
+          <label className="wall-bar__item">
+            <span>Задачи</span>
+            <select value={o.cardOrder} onChange={(e) => update({ cardOrder: e.target.value as WallOpts["cardOrder"] })}>
+              <option value="fresh">Только что пришедшие сверху</option>
+              <option value="priority">По приоритету</option>
+              <option value="column">Как в колонке</option>
+            </select>
+          </label>
+          <label className="wall-bar__item">
+            <span>Пустые колонки</span>
+            <select value={o.emptyTiles} onChange={(e) => update({ emptyTiles: e.target.value as WallOpts["emptyTiles"] })}>
+              <option value="end">Строкой в конце</option>
+              <option value="hide">Не показывать</option>
+              <option value="keep">Плитками, как все</option>
+            </select>
+          </label>
+          <label className="wall-bar__item">
+            <span>Подсветка новых</span>
+            <select value={o.freshMin} onChange={(e) => update({ freshMin: Number(e.target.value) })}>
+              {[5, 15, 30, 60].map((m) => <option key={m} value={m}>{m} мин</option>)}
+              <option value={0}>Выключена</option>
+            </select>
+          </label>
+          <label className="wall-bar__item">
+            <span>Мигать критической, если не взяли</span>
+            <select value={blinkOf(wall).stuckMin} onChange={(e) => update({ stuckMin: Number(e.target.value) })}>
+              {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>за {m} мин</option>)}
+              <option value={0}>Не мигать</option>
+            </select>
+          </label>
+          <label className="wall-bar__item">
+            <span>Мигание</span>
+            <select value={blinkOf(wall).blink} onChange={(e) => update({ blink: e.target.value as BlinkOpts["blink"] })}>
+              <option value="strong">Сильное — вся карточка</option>
+              <option value="soft">Мягкое — рамка</option>
+            </select>
+          </label>
+          <label className="check check--inline">
+            <input type="checkbox" checked={o.showSummary} onChange={(e) => update({ showSummary: e.target.checked })} />
+            <span>Сводка</span>
           </label>
           {hidden.length > 0 && (
             <div className="wall-bar__hidden">
@@ -143,6 +211,7 @@ export default function WallPage() {
 
       <header className="wall__head">
         {wall.showTitle ? <h1>{layout.board.name}</h1> : <span />}
+        {!editing && o.showSummary && <WallSummary columns={visible} freshMin={o.freshMin} />}
         <div className="wall__right">
           {/* кнопка всегда на месте и стоит слева от часов, чтобы их не загораживать */}
           {!editing && (
@@ -155,12 +224,44 @@ export default function WallPage() {
       </header>
 
       <WallGrid editing={editing} scale={scale}>
-        {visible.map((c) => (
-          <Tile key={c.id} column={c} tile={wall.tiles[c.id]} editing={editing} scale={scale}
+        {live.map((c) => (
+          <Tile key={c.id} column={c} tile={wall.tiles[c.id]} editing={editing} scale={scale} flow={!editing && !(o.tileOrder === "layout" && o.emptyTiles === "keep")}
+            cardOrder={o.cardOrder} freshMin={o.freshMin} blink={blinkOf(wall)}
             onChange={(patch) => updateTile(c.id, patch)} openIncident={s.openIncident} />
         ))}
       </WallGrid>
+      {empty.length > 0 && (
+        <div className="wall-empty" aria-label="Колонки без задач">
+          <span>Сейчас пусто:</span>
+          {empty.map((c) => <span key={c.id} className="wall-empty__col" style={{ "--col": c.color } as React.CSSProperties}>{c.name}</span>)}
+        </div>
+      )}
       {visible.length === 0 && <p className="muted wall__empty">Все колонки скрыты. Откройте настройку экрана и верните их</p>}
+    </div>
+  );
+}
+
+/** Сводка в шапке экрана: сколько критических, сколько пришло за час, сколько просрочено. */
+function WallSummary({ columns, freshMin }: { columns: LayoutColumn[]; freshMin: number }) {
+  const now = useNow();
+  const seen = new Map<string, { crit: boolean; isNew: boolean; fresh: boolean; over: boolean }>();
+  for (const c of columns) for (const k of c.cards) {
+    const prev = seen.get(k.id);
+    seen.set(k.id, {
+      crit: (prev?.crit ?? false) || k.priorityId === 4,
+      isNew: k.isNew, fresh: isFresh(k, now, freshMin), over: k.overdue,
+    });
+  }
+  const all = [...seen.values()];
+  const crit = all.filter((x) => x.crit).length;
+  const fresh = all.filter((x) => x.isNew).length;
+  const over = all.filter((x) => x.over).length;
+  const justNow = all.filter((x) => x.fresh).length;
+  return (
+    <div className="wall-sum" aria-label="Сводка">
+      <span className={`wall-sum__item ${crit ? "is-crit" : ""}`}><b>{crit}</b> критических</span>
+      <span className={`wall-sum__item ${justNow ? "is-fresh" : ""}`}><b>{fresh}</b> новых за час</span>
+      <span className={`wall-sum__item ${over ? "is-over" : ""}`}><b>{over}</b> просрочено</span>
     </div>
   );
 }
@@ -174,11 +275,15 @@ function WallGrid({ children, editing, scale }: { children: React.ReactNode; edi
   );
 }
 
-function Tile({ column: c, tile, editing, scale, onChange, openIncident }: {
+function Tile({ column: c, tile, editing, scale, flow = false, cardOrder = "fresh", freshMin = 15, blink = blinkOf(null), onChange, openIncident }: {
+  blink?: BlinkOpts;
   column: LayoutColumn;
   tile: WallTile;
   editing: boolean;
   scale: number;
+  flow?: boolean; // без точного места: плитки сами встают друг за другом
+  cardOrder?: WallOpts["cardOrder"];
+  freshMin?: number;
   onChange: (patch: Partial<WallTile>) => void;
   openIncident: (id: string) => void;
 }) {
@@ -228,13 +333,17 @@ function Tile({ column: c, tile, editing, scale, onChange, openIncident }: {
   };
 
   // все задачи колонки; если не помещаются в плитку, список листается колёсиком или пальцем
-  const cards = c.cards;
+  const now = useNow();
+  const cards = orderCards(c.cards, cardOrder, now, freshMin);
 
   return (
     <section
       ref={ref}
       className={`wtile wtile--${c.level} has-cards ${dragging ? "is-dragging" : ""}`}
-      style={{ gridColumn: `${tile.x + 1} / span ${tile.w}`, gridRow: `${tile.y + 1} / span ${tile.h}`, "--col": c.color } as React.CSSProperties}
+      style={{
+        gridColumn: flow ? `span ${tile.w}` : `${tile.x + 1} / span ${tile.w}`,
+        gridRow: flow ? `span ${tile.h}` : `${tile.y + 1} / span ${tile.h}`, "--col": c.color,
+      } as React.CSSProperties}
       tabIndex={editing ? 0 : undefined}
       onKeyDown={onKey}
       aria-label={editing ? `${c.name}: колонка ${tile.x + 1}, строка ${tile.y + 1}, ширина ${tile.w}, высота ${tile.h}` : undefined}
@@ -252,14 +361,15 @@ function Tile({ column: c, tile, editing, scale, onChange, openIncident }: {
         <ul className="wtile__cards" tabIndex={0} aria-label={`Задачи колонки «${c.name}»`}
           onPointerDown={(e) => e.stopPropagation()}>
           {cards.map((k) => (
-            <li key={k.id} className="wcard">
+            <li key={k.id} className={`wcard ${isFresh(k, now, freshMin) ? "is-fresh" : ""} ${isStuck(k, c.level, blink) ? `is-stuck is-stuck--${blink.blink}` : ""}`}>
               <Fuse pct={k.deadlineLeftPct} overdue={k.overdue} />
               <button className="wcard__open" onClick={() => !editing && openIncident(k.id)} disabled={editing}
                 aria-label={`Открыть ${k.id}`}>
                 <span className="wcard__top">
                   <span className="wcard__id">{k.id}</span>
                   {k.priorityId !== null && <span className={`prio prio--${k.priorityId}`}>{k.priority}</span>}
-                  {k.isNew && <span className="tag tag--new">новый</span>}
+                  {k.isNew && <span className="tag tag--new">{newLabel(k, now, freshMin)}</span>}
+                  {isStuck(k, c.level, blink) && k.idleMin != null && <span className="tag tag--stuck">не взят {Math.floor(k.idleMin)} мин</span>}
                   {k.wave && <span className="tag tag--wave">волна · {k.wave.size}</span>}
                   {k.priorityUnderestimated && <span className="tag tag--warn">приоритет занижен?</span>}
                   {k.overdueRisk && <span className="tag tag--warn">риск просрочки</span>}

@@ -110,11 +110,24 @@ def _in_column(a: Alert, members: set[tuple[int, str]]) -> bool:
 
 
 def alert_dict(a: Alert, inc: Incident | None, cols: dict[int, Column], members: set[tuple[int, str]]) -> dict:
+    # у оповещения могут быть колонки разных пользователей — показываем только свои
+    from sqlalchemy.orm import object_session
+    sess = object_session(a)
+    own = None
+    if sess is not None:
+        from .db import CURRENT_USER
+        key = ("own_cols", CURRENT_USER.get())
+        if key not in sess.info:  # одним запросом на весь список
+            sess.info[key] = user_column_ids(sess)
+        own = sess.info[key]
+    ids = [x for x in a.column_ids or [] if x in cols and (own is None or x in own)]
     c = cols.get(a.column_id or -1)
+    if c is not None and own is not None and c.id not in own:
+        c = cols[ids[0]] if ids else None
     return {
         "id": a.id, "incidentId": a.incident_id, "header": (inc.data.get("header") if inc else "") or "",
         "priority": inc.data.get("priority") if inc else None, "columnId": a.column_id,
-        "column": c.name if c else "колонка удалена", "columns": [cols[x].name for x in a.column_ids or [] if x in cols],
+        "column": c.name if c else "колонка удалена", "columns": [cols[x].name for x in ids],
         "level": a.level, "mode": a.mode, "repeatMin": a.repeat_min, "createdAt": a.created_at.isoformat() + "Z",
         "lastFiredAt": a.last_fired_at.isoformat() + "Z" if a.last_fired_at else None, "firedCount": a.fired_count,
         "inColumn": _in_column(a, members),
@@ -173,7 +186,7 @@ def due_alerts(s: Session, since: datetime | None, now: datetime | None = None) 
     """Оповещения, которые сработали в промежутке (since, now]: новые и подошедшие повторы.
 
     Сервер ничего не помечает: каждый браузер присылает время своего прошлого опроса и получает всё, что
-    сработало после него. Поэтому окно и звук получают все открытые пульты и экран на стене, а не только тот,
+    сработало после него. Поэтому окно и звук получают все открытые вкладки КООРАДАРа и экран на стене, а не только тот,
     кто спросил первым. Повтор срабатывает в моменты «создано + k·N минут», пока инцидент лежит в колонке.
     Без since (первый опрос браузера) возвращается пустой список — старое не всплывает при открытии страницы.
     """

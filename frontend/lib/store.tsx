@@ -25,6 +25,8 @@ interface Store {
   markAlertsRead: (ids: number[]) => Promise<boolean>;
   ai: AiProgress | null;
   popups: AlertItem[];
+  critical: CriticalItem[]; // критические оповещения за последние полчаса, свежие первыми — для большого баннера
+  soundReady: boolean; // браузер разрешил звук (после первого касания страницы)
   toasts: Toast[];
   uploading: boolean;
   setActiveBoard: (id: number) => Promise<void>;
@@ -36,6 +38,14 @@ interface Store {
   toast: (text: string, kind?: Toast["kind"]) => void;
   dismissPopup: (id: number) => void;
 }
+
+export interface CriticalItem {
+  alert: AlertItem;
+  at: number; // когда пришло в этот браузер
+}
+
+/** Сколько живёт память о критическом оповещении: баннер, затем строка «последний критический». */
+export const CRITICAL_KEEP_MS = 30 * 60 * 1000;
 
 export interface AiProgress {
   enabled: boolean;
@@ -67,11 +77,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [unreadAlerts, setUnreadAlerts] = useState(0);
   const pendingRead = useRef(0); // отметки, отправленные на сервер, но ещё не подтверждённые
   // Время прошлого опроса оповещений этим браузером: сервер отдаёт всё, что сработало после него.
-  // Так окно и звук получает каждый открытый пульт, а не только тот, кто загрузил файл.
+  // Так окно и звук получает каждая открытая вкладка КООРАДАРа, а не только тот, кто загрузил файл.
   const alertsSince = useRef<string | null>(null);
   const [ai, setAi] = useState<AiProgress | null>(null);
   const aiBusy = useRef(false);
   const [popups, setPopups] = useState<AlertItem[]>([]);
+  const [critical, setCritical] = useState<CriticalItem[]>([]);
+  const [soundReady, setSoundReady] = useState(false);
+  const lastSnapshot = useRef<number | null | undefined>(undefined);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [uploading, setUploading] = useState(false);
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -111,12 +124,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         } catch { alertsSince.current = ""; }
       }
       const q = alertsSince.current ? `?since=${encodeURIComponent(alertsSince.current)}` : "";
-      const r = await api.get<{ due: AlertItem[]; active: number; unread: number; now: string; ai: AiProgress }>(
+      const r = await api.get<{ due: AlertItem[]; active: number; unread: number; now: string; ai: AiProgress; snapshotId?: number | null }>(
         `/api/alerts/due${q}`);
       if (typeof r.now === "string" && r.now) {
         alertsSince.current = r.now;
         try { localStorage.setItem("mts.alertsSince", r.now); } catch { /* без сохранения */ }
       }
+      // кто-то загрузил новую выгрузку — перерисовать доску сразу, не дожидаясь планового обновления
+      if (lastSnapshot.current !== undefined && r.snapshotId !== lastSnapshot.current) setVersion((v) => v + 1);
+      lastSnapshot.current = r.snapshotId ?? null;
       setActiveAlerts(r.active);
       setUnreadAlerts(Math.max(0, r.unread - pendingRead.current));
       setAi(r.ai);
@@ -125,9 +141,21 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       else if (busy) setVersion((v) => v + 1); // результаты пишутся по мере готовности
       aiBusy.current = busy;
       if (r.due.length) {
-        setPopups((p) => {
+        // критические — в большой баннер, остальные — в обычные окна
+        const crit = r.due.filter((a) => a.level === "critical");
+        const rest = r.due.filter((a) => a.level !== "critical");
+        if (crit.length) {
+          const at = Date.now();
+          setCritical((c) => {
+            const known = new Set(c.map((x) => x.alert.id));
+            const fresh = crit.filter((a) => !known.has(a.id)).map((alert) => ({ alert, at }));
+            return [...fresh, ...c].filter((x) => at - x.at < CRITICAL_KEEP_MS).slice(0, 20);
+          });
+          setVersion((v) => v + 1);
+        }
+        if (rest.length) setPopups((p) => {
           const known = new Set(p.map((x) => x.id));
-          return [...r.due.filter((x) => !known.has(x.id)), ...p].slice(0, 6);
+          return [...rest.filter((x) => !known.has(x.id)), ...p].slice(0, 6);
         });
         if (r.due.some((a) => a.mode === "sound")) {
           audio.current?.play().catch(() => {
@@ -151,17 +179,32 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       }
       pollAlerts();
     })();
+    // экран на стене смотрят без рук: оповещения проверяем каждые 10 секунд, доску пересчитываем раз в 30
+    const poll = setInterval(pollAlerts, 10000);
     const t = setInterval(() => {
-      pollAlerts();
       setVersion((v) => v + 1); // правила по времени идут и без загрузок
+      setCritical((c) => c.filter((x) => Date.now() - x.at < CRITICAL_KEEP_MS));
     }, 30000);
+    // звук браузер разрешает только после первого касания страницы
+    const unlock = () => {
+      const a = audio.current;
+      if (!a) return;
+      a.muted = true; // беззвучный пробный запуск: браузер запоминает разрешение
+      a.play().then(() => { a.pause(); a.currentTime = 0; a.muted = false; setSoundReady(true); })
+        .catch(() => { a.muted = false; });
+    };
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
     // пока ИИ анализирует, опрашиваем чаще, чтобы прогресс и результаты появлялись быстро
     const fast = setInterval(() => {
       if (aiBusy.current) pollAlerts();
     }, 4000);
     return () => {
       clearInterval(t);
+      clearInterval(poll);
       clearInterval(fast);
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
     };
   }, [reloadBoards, reloadMeta, pollAlerts, toast]);
 
@@ -240,7 +283,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const value: Store = {
     fields, fieldMap, boards, activeBoardId, activeBoard, settings, snapshots, lastUpload, version,
-    openIncidentId, activeAlerts, unreadAlerts, markAlertsRead, ai, popups, toasts, uploading, setActiveBoard, reloadBoards, reloadMeta, bump,
+    openIncidentId, activeAlerts, unreadAlerts, markAlertsRead, ai, popups, critical, soundReady, toasts, uploading, setActiveBoard, reloadBoards, reloadMeta, bump,
     openIncident: setOpen, upload, toast, dismissPopup,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

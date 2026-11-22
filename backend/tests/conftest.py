@@ -25,6 +25,11 @@ def client():
     with TestClient(app) as c:
         # все /api/* только после входа — тесты работают под mts1
         assert c.post("/api/auth/login", json={"login": "mts1", "password": "mts1"}).status_code == 200
+        # при входе у mts1 появляется доска «Задание МТС» (это проверяет test_auth); остальные тесты работают
+        # с одной доской «Фокус внимания», как раньше
+        for b in c.get("/api/boards").json()["boards"]:
+            if b["name"] == "Задание МТС":
+                assert c.delete(f"/api/boards/{b['id']}").status_code == 200
         yield c
 
 

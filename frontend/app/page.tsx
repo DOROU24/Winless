@@ -18,6 +18,7 @@ import { ColumnEditor } from "@/components/ColumnEditor";
 import { Icon } from "@/components/Icon";
 import { NewBoardDialog } from "@/components/AppShell";
 import { Modal } from "@/components/Modal";
+import { blinkOf, nonEmptyFirst } from "@/lib/attention";
 
 export default function BoardPage() {
   const s = useStore();
@@ -49,7 +50,7 @@ export default function BoardPage() {
 
   const onDragEnd = async (e: DragEndEvent) => {
     if (!layout || !e.over || e.active.id === e.over.id) return;
-    const ids = layout.columns.map((c) => c.id);
+    const ids = nonEmptyFirst(layout.columns).map((c) => c.id);
     const next = arrayMove(ids, ids.indexOf(Number(e.active.id)), ids.indexOf(Number(e.over.id)));
     setLayout({ ...layout, columns: next.map((id) => layout.columns.find((c) => c.id === id)!) });
     await api.patch(`/api/boards/${layout.board.id}`, { columnOrder: next });
@@ -108,14 +109,16 @@ export default function BoardPage() {
         </div>
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-          <SortableContext items={layout.columns.map((c) => c.id)} strategy={horizontalListSortingStrategy}>
+          <SortableContext items={nonEmptyFirst(layout.columns).map((c) => c.id)} strategy={horizontalListSortingStrategy}>
             <div className="columns">
-              {layout.columns.map((c) => (
+              {/* колонки с задачами слева, пустые уезжают в конец */}
+              {nonEmptyFirst(layout.columns).map((c) => (
                 <ColumnView
                   key={c.id}
                   column={c}
                   onEdit={() => setEditing(c)}
                   onToggle={() => toggleCollapse(c)}
+                  blink={blinkOf(board.wallLayout)}
                 />
               ))}
             </div>

@@ -77,6 +77,14 @@ export interface WallLayout {
   showClock: boolean;
   showTitle: boolean;
   tiles: Record<string, WallTile>;
+  // экран без рук; у старых раскладок этих полей нет — берутся значения по умолчанию (WALL_DEFAULTS)
+  tileOrder?: "fresh" | "priority" | "layout"; // плитки: по свежести, затем по приоритету / по приоритету / как расставлены
+  cardOrder?: "fresh" | "priority" | "column"; // задачи в плитке
+  emptyTiles?: "end" | "hide" | "keep"; // пустые колонки
+  freshMin?: number; // сколько минут задача считается только что пришедшей; 0 — без подсветки
+  showSummary?: boolean;
+  stuckMin?: number; // критическая задача мигает, если её не взяли в работу дольше стольких минут; 0 — выключено
+  blink?: "strong" | "soft"; // сильное — мигает вся карточка, мягкое — рамка
 }
 
 export interface CardData {
@@ -90,7 +98,9 @@ export interface CardData {
   deadlineLeftPct: number | null;
   deadlineLeftMin: number | null;
   overdue: boolean;
+  idleMin?: number | null; // минут в «Назначен» с последнего назначения: никто не взял
   isNew: boolean;
+  firstSeenAt?: string | null; // когда инцидент впервые пришёл в выгрузке
   disappeared: boolean;
   level: Level;
   wave?: { id: string; size: number; title: string } | null;

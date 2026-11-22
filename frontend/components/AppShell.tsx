@@ -1,5 +1,6 @@
 "use client";
 
+import { CriticalBanner, SoundHint } from "./CriticalBanner";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -73,6 +74,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {children}
         {s.openIncidentId && <IncidentDrawer id={s.openIncidentId} />}
         <Popups />
+        <CriticalBanner />
+        {path.startsWith("/wall") && <SoundHint />}
       </>
     );
   }
@@ -84,6 +87,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main className="page">{children}</main>
       {s.openIncidentId && <IncidentDrawer id={s.openIncidentId} />}
       <Popups />
+      <CriticalBanner />
       <Toasts />
       {dragging && (
         <div className="drop-overlay" aria-hidden>
@@ -222,7 +226,7 @@ function TopBar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void })
       </button>
       <Link href="/" className="top__brand">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img className="top__logo" src="/brand/logo.svg" alt="МТС" width={36} height={36} />
+        <img className="top__logo" src="/brand/logo.png" alt="КООРАДАР" width={36} height={36} />
         <span className="top__name">КООРАДАР</span>
       </Link>
       <div className="top__actions">

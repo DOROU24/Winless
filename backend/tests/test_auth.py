@@ -22,7 +22,7 @@ def test_each_user_has_own_boards(client):
     mine = client.get("/api/boards").json()["boards"]
     u2 = other(client, "mts2")
     theirs = u2.get("/api/boards").json()
-    assert theirs["boards"] and theirs["boards"][0]["name"] == "Фокус внимания"  # своя доска создаётся при первом входе
+    assert theirs["boards"] and theirs["boards"][0]["name"] == "Задание МТС"  # своя доска создаётся при первом входе
     assert {b["id"] for b in mine}.isdisjoint({b["id"] for b in theirs["boards"]})
     assert theirs["activeBoardId"] == theirs["boards"][0]["id"]
     # чужую доску не видно и не изменить

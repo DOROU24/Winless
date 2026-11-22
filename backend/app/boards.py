@@ -4,7 +4,9 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .db import Board, Column, Incident
+from datetime import timedelta
+
+from .db import Board, Column, Incident, Snapshot, utcnow
 from .fields import EvalContext, FieldDef, build_context, field_value, parse_dt, registry, waves
 from .rules import explain, match, validate
 
@@ -79,6 +81,34 @@ def place(board: Board, columns: list[Column], incidents: list[Incident], reg, c
     return result
 
 
+# Плашка «новый» держится час с момента, когда инцидент впервые пришёл в выгрузке, — даже если за это время
+# загрузили ещё файлы (иначе повторная загрузка той же выгрузки стирает плашку у всех). Первые 15 минут
+# карточка ещё и подсвечена (это решает фронтенд по firstSeenAt).
+NEW_BADGE_MIN = 60
+
+
+def _first_seen(inc: Incident, ctx) -> str | None:
+    times = ctx.cache.get("snapshot_times")
+    if times is None:
+        times = {i: t for i, t in ctx.session.execute(select(Snapshot.id, Snapshot.uploaded_at))}
+        ctx.cache["snapshot_times"] = times
+    t = times.get(inc.first_snapshot_id)
+    return t.isoformat() + "Z" if t else None
+
+
+TAKEN_STATES = {2, 7, 10}  # Выполняется, Завершен, Закрыт — инцидент уже взяли
+
+
+def is_new_badge(inc: Incident, ctx) -> bool:
+    """«Новый» гаснет сам, без нажатий: через час после прихода или как только инцидент взяли в работу."""
+    if inc.data.get("stateId") in TAKEN_STATES:
+        return False
+    if inc.first_snapshot_id == ctx.latest_snapshot_id:
+        return True
+    seen = _first_seen(inc, ctx)
+    return bool(seen) and parse_dt(seen).replace(tzinfo=None) >= utcnow() - timedelta(minutes=NEW_BADGE_MIN)
+
+
 def card(inc: Incident, c: Column, reg, ctx, with_why=True) -> dict:
     fields = list(dict.fromkeys(["id"] + (c.card_fields or [])))
     values = {}
@@ -92,7 +122,8 @@ def card(inc: Incident, c: Column, reg, ctx, with_why=True) -> dict:
         "deadlineLeftPct": field_value(reg, "calc.deadlineLeftPct", inc, ctx),
         "deadlineLeftMin": field_value(reg, "calc.deadlineLeftMin", inc, ctx),
         "overdue": field_value(reg, "calc.overdue", inc, ctx),
-        "isNew": inc.first_snapshot_id == ctx.latest_snapshot_id,
+        "idleMin": field_value(reg, "calc.idleMin", inc, ctx),  # сколько минут в «Назначен» — никто не взял
+        "isNew": is_new_badge(inc, ctx), "firstSeenAt": _first_seen(inc, ctx),
         "disappeared": inc.disappeared, "level": c.level,
         "wave": _wave_brief(inc, reg, ctx),
         "priorityUnderestimated": field_value(reg, "ai.priorityUnderestimated", inc, ctx),

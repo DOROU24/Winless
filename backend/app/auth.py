@@ -73,21 +73,35 @@ def logout(s: Session, token: str | None) -> None:
 
 
 def ensure_own_board(s: Session, user: User) -> None:
-    """У нового пользователя сразу есть своя доска «Фокус внимания»."""
+    """У каждого пользователя есть доска «Задание МТС» — доска по заданию, с неё начинается работа.
+
+    Новому пользователю создаём её первой и делаем активной. Тому, у кого уже есть доска задания, один раз
+    переключаем активную доску на неё; дальше выбор пользователя не трогаем.
+    """
+    from sqlalchemy import or_
     from .db import get_setting, set_setting
     from .templates import create_board_from_template
     tok = CURRENT_USER.set(user.id)
+    marker = f"mts_default:{user.id}"
     try:
-        if s.execute(select(Board.id).where(Board.owner_id == user.id).limit(1)).first() is None:
-            b = create_board_from_template(s, "focus")
-            set_setting(s, "active_board_id", b.id)
+        mine = select(Board.id).where(Board.owner_id == user.id)
+        mts = s.execute(mine.where(or_(Board.template == "mts", Board.name == "Задание МТС"))
+                        .order_by(Board.position).limit(1)).scalar()
+        if mts is None:
+            fresh = s.execute(mine.limit(1)).first() is None
+            b = create_board_from_template(s, "mts")
+            if fresh:
+                b.position = -1
+                set_setting(s, "active_board_id", b.id)
             s.flush()
             from . import alerts
             alerts.baseline(s, board_ids=[b.id])
-            s.commit()
-        elif get_setting(s, "active_board_id") is None:
-            bid = s.execute(select(Board.id).where(Board.owner_id == user.id).order_by(Board.position)).scalar()
-            set_setting(s, "active_board_id", bid)
-            s.commit()
+        elif s.get(Setting, marker) is None or get_setting(s, "active_board_id") is None:
+            set_setting(s, "active_board_id", mts)
+        if s.get(Setting, marker) is None:
+            s.add(Setting(key=marker, value=True))
+        if get_setting(s, "active_board_id") is None:
+            set_setting(s, "active_board_id", s.execute(mine.order_by(Board.position)).scalar())
+        s.commit()
     finally:
         CURRENT_USER.reset(tok)
