@@ -77,8 +77,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className={`shell ${narrow ? "shell--narrow" : ""}`}>
-      <TopBar />
-      <Sidebar narrow={narrow} onToggle={toggleNarrow} />
+      <TopBar narrow={narrow} onToggle={toggleNarrow} />
+      <Sidebar narrow={narrow} />
       <main className="page">{children}</main>
       {s.openIncidentId && <IncidentDrawer id={s.openIncidentId} />}
       <Popups />
@@ -96,27 +96,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Sidebar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void }) {
+function Sidebar({ narrow }: { narrow: boolean }) {
   const path = usePathname();
   const router = useRouter();
   const s = useStore();
   const [creating, setCreating] = useState(false);
 
   return (
-    <aside className="side">
-      <button className="side__toggle" onClick={onToggle} aria-expanded={!narrow}
-        aria-label={narrow ? "Развернуть панель" : "Свернуть панель"} title={narrow ? "Развернуть панель" : "Свернуть панель"}>
-        <Icon name="menu" size={22} />
-      </button>
+    <aside className="side" id="side-panel">
       <nav className="side__nav" aria-label="Разделы">
         {NAV.map((n) => (
           <Link key={n.href} href={n.href} className={`side__link ${path === n.href ? "is-active" : ""}`} title={narrow ? n.label : undefined}>
-            <Icon name={n.icon} />
+            <Icon name={n.icon} size={18} />
             <span>{n.label}</span>
           </Link>
         ))}
         <a href="/wall" target="_blank" rel="noreferrer" className="side__link" title={narrow ? "Экран на стене" : undefined}>
-          <Icon name="wall" />
+          <Icon name="wall" size={18} />
           <span>Экран на стене</span>
           <Icon name="external" size={13} className="side__ext" />
         </a>
@@ -139,7 +135,7 @@ function Sidebar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void }
                   if (path !== "/") router.push("/");
                 }}
               >
-                <i className="side__initial" aria-hidden>{b.name.trim().slice(0, 1).toUpperCase()}</i>
+                <i className="side__dot" aria-hidden style={{ background: b.columns?.[0]?.color ?? "#b4b2a9" }} />
                 <span>{b.name}</span>
               </button>
             </li>
@@ -213,11 +209,15 @@ export function NewBoardDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-function TopBar() {
+function TopBar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void }) {
   const s = useStore();
   const input = useRef<HTMLInputElement>(null);
   return (
     <header className="top">
+      <button className="top__side-toggle" onClick={onToggle} aria-expanded={!narrow} aria-controls="side-panel"
+        aria-label={narrow ? "Развернуть панель" : "Свернуть панель"} title={narrow ? "Развернуть панель" : "Свернуть панель"}>
+        <Icon name={narrow ? "sidebarExpand" : "sidebarCollapse"} size={20} />
+      </button>
       <Link href="/" className="top__brand">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img className="top__logo" src="/brand/logo.svg" alt="МТС" width={40} height={40} />

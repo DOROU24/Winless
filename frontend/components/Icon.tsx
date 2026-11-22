@@ -19,6 +19,8 @@ const P: Record<string, string> = {
   chevronLeft: "M15 18l-6-6 6-6",
   panel: "M3 4h18v16H3zM9 4v16",
   menu: "M4 7h16M4 12h16M4 17h16",
+  sidebarCollapse: "M4 4h16v16H4zM9 4v16M16 10l-2 2 2 2",
+  sidebarExpand: "M4 4h16v16H4zM9 4v16M14 10l2 2-2 2",
   chevronDown: "M6 9l6 6 6-6",
   grip: "M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01",
   search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3",
