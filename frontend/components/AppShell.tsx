@@ -106,8 +106,7 @@ function Sidebar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void }
     <aside className="side">
       <button className="side__toggle" onClick={onToggle} aria-expanded={!narrow}
         aria-label={narrow ? "Развернуть панель" : "Свернуть панель"} title={narrow ? "Развернуть панель" : "Свернуть панель"}>
-        <Icon name="panel" />
-        <span>Свернуть панель</span>
+        <Icon name="menu" size={22} />
       </button>
       <nav className="side__nav" aria-label="Разделы">
         {NAV.map((n) => (

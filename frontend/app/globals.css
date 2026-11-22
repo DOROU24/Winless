@@ -950,3 +950,9 @@ input:focus, select:focus, textarea:focus, input:focus-visible, select:focus-vis
 /* кнопка сворачивания панели — в самом верху панели */
 .side__toggle { margin: -8px 0 10px; padding: 6px 4px; }
 .shell--narrow .side__toggle { margin: -4px 0 10px; }
+
+/* кнопка-бургер сворачивания панели: только значок, в стиле остальных кнопок-иконок */
+.side__toggle { display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; margin: -10px 0 10px 8px;
+  border-radius: 12px; color: var(--text-2); font-size: 0; gap: 0; }
+.side__toggle:hover { background: #f3f3f4; color: var(--text); }
+.shell--narrow .side__toggle { margin: -6px auto 10px; }
