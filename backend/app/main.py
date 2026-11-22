@@ -632,9 +632,21 @@ def delete_preset(preset_id: int, s: Session = DB):
 # ---- оповещения ---------------------------------------------------------------------------
 
 @app.get("/api/alerts")
-def get_alerts(s: Session = DB):
-    """Список оповещений только для чтения."""
-    return alerts_mod.list_alerts(s)
+def get_alerts(limit: int = 100, s: Session = DB):
+    """Список оповещений для панели уведомлений, новые сверху."""
+    return {"items": alerts_mod.list_alerts(s, max(1, min(limit, 300))), "unread": alerts_mod.unread_count(s)}
+
+
+class ReadBody(BaseModel):
+    ids: list[int]
+
+
+@app.post("/api/alerts/read")
+def read_alerts(body: ReadBody, s: Session = DB):
+    """Пометить оповещения прочитанными (их увидели в панели). Меняется только отметка оповещения."""
+    n = alerts_mod.mark_read(s, body.ids)
+    s.commit()
+    return {"ok": True, "marked": n, "unread": alerts_mod.unread_count(s)}
 
 
 @app.get("/api/alerts/due")
@@ -645,7 +657,7 @@ def get_due_alerts(s: Session = DB):
     active = alerts_mod.active_count(s)
     s.commit()
     from .llm.pipeline import worker
-    return {"due": due, "active": active, "ai": worker.view()}
+    return {"due": due, "active": active, "unread": alerts_mod.unread_count(s), "ai": worker.view()}
 
 
 # ---- связи ----------------------------------------------------------------------------------

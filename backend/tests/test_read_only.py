@@ -65,6 +65,8 @@ def sample_body(method: str, path: str, ctx: dict) -> dict:
         return {"name": "Своё 2"}
     if path.startswith("/api/boards/") and path.count("/") == 3 and method == "PATCH":
         return {"name": "Переименована", "mode": "all", "wallLayout": {"scale": 1.2, "tiles": {}}}
+    if path == "/api/alerts/read":
+        return {"ids": [ctx["alert"]]}
     if path == "/api/assistant/apply":
         return {"proposal": {"kind": "create_column", "boardId": ctx["board"],
                              "column": {"name": "От помощника", "rule": {"field": "priorityId", "cmp": "eq", "value": 4},
@@ -103,7 +105,7 @@ def test_no_endpoint_except_upload_changes_incidents(client):
             "board": board["id"], "column": board["columns"][0]["id"] if board["columns"] else 0,
             "incident": client.get("/api/incidents?limit=1").json()[0]["id"],
             "link_rule": client.get("/api/link-rules").json()[-1]["id"],
-            "alert": (client.get("/api/alerts").json() or [{"id": 0}])[0]["id"],
+            "alert": (client.get("/api/alerts").json()["items"] or [{"id": 0}])[0]["id"],
             "link": (client.get("/api/links").json() or [{"id": 0}])[0]["id"],
             "preset": ([p["id"] for p in client.get("/api/presets?with_counts=false").json() if p["custom"]] or [1])[-1],
         }
@@ -129,7 +131,9 @@ def test_no_endpoint_except_upload_changes_incidents(client):
         if method in WRITE_METHODS:
             assert not path.startswith("/api/incidents"), f"{method} {path}: инциденты только для чтения"
             assert not path.startswith("/api/links"), f"{method} {path}: связи создают только правила"
-            assert not path.startswith("/api/alerts/") or path == "/api/alerts/due", f"{method} {path}"
+            # оповещения: только опрос и отметка «прочитано» — это состояние самого оповещения, не инцидента
+            assert not path.startswith("/api/alerts/") or path in ("/api/alerts/due", "/api/alerts/read"), \
+                f"{method} {path}"
     assert any(c.startswith("DELETE") for c in checked) and any(c.startswith("PATCH") for c in checked)
 
 

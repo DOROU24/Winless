@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import func, delete, select
 from sqlalchemy.orm import Session
 
 from .boards import LEVEL_RANK, board_columns, load_incidents, place
@@ -118,6 +118,7 @@ def alert_dict(a: Alert, inc: Incident | None, cols: dict[int, Column], members:
         "level": a.level, "mode": a.mode, "repeatMin": a.repeat_min, "createdAt": a.created_at.isoformat() + "Z",
         "lastFiredAt": a.last_fired_at.isoformat() + "Z" if a.last_fired_at else None, "firedCount": a.fired_count,
         "inColumn": _in_column(a, members),
+        "read": a.read_at is not None, "readAt": a.read_at.isoformat() + "Z" if a.read_at else None,
     }
 
 
@@ -128,6 +129,20 @@ def list_alerts(s: Session, limit=300) -> list[dict]:
     cols = {c.id: c for c in s.execute(select(Column)).scalars()}
     members = _memberships(s)
     return [alert_dict(a, incs.get(a.incident_id), cols, members) for a in rows]
+
+
+def unread_count(s: Session) -> int:
+    return s.execute(select(func.count(Alert.id)).where(Alert.read_at.is_(None))).scalar() or 0
+
+
+def mark_read(s: Session, ids: list[int]) -> int:
+    """Отметить оповещения прочитанными. Повторная отметка ничего не меняет. Возвращает, сколько отмечено сейчас."""
+    rows = list(s.execute(select(Alert).where(Alert.id.in_(set(ids)), Alert.read_at.is_(None))).scalars()) if ids else []
+    now = utcnow()
+    for a in rows:
+        a.read_at = now
+    s.flush()
+    return len(rows)
 
 
 def active_count(s: Session) -> int:

@@ -147,6 +147,8 @@ class Alert(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_fired_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     fired_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Когда оповещение прочитали в панели уведомлений. Это отметка самого оповещения, инциденты не меняются
+    read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class AlertMembership(Base):
@@ -220,6 +222,10 @@ def migrate(eng) -> None:
             if col not in {c["name"] for c in insp.get_columns(table)}:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
         alert_cols = {c["name"] for c in insp.get_columns("alerts")}
+        if "read_at" not in alert_cols:
+            conn.execute(text("ALTER TABLE alerts ADD COLUMN read_at DATETIME"))
+            # то, что было до появления отметки, считаем прочитанным, иначе бейдж сразу покажет всю историю
+            conn.execute(text("UPDATE alerts SET read_at = created_at"))
         for col in ("acked", "acked_at"):
             if col in alert_cols:
                 conn.execute(text(f"ALTER TABLE alerts DROP COLUMN {col}"))

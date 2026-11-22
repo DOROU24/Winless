@@ -144,6 +144,8 @@ export interface AlertItem {
   lastFiredAt: string | null;
   firedCount: number;
   inColumn: boolean;
+  read: boolean;
+  readAt: string | null;
 }
 
 export interface LinkItem {

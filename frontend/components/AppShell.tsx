@@ -9,6 +9,7 @@ import { LEVEL_LABEL, plural, relTime } from "@/lib/format";
 import { Icon } from "./Icon";
 import { Assistant } from "./Assistant";
 import { IncidentDrawer } from "./IncidentDrawer";
+import { NotificationsBell } from "./Notifications";
 import { Modal } from "./Modal";
 
 const NAV = [
@@ -78,7 +79,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className={`shell ${narrow ? "shell--narrow" : ""}`}>
       <TopBar />
       <Sidebar narrow={narrow} onToggle={toggleNarrow} />
-      <main className={`page ${path.startsWith("/alerts") ? "page--gray" : ""}`}>{children}</main>
+      <main className="page">{children}</main>
       {s.openIncidentId && <IncidentDrawer id={s.openIncidentId} />}
       <Popups />
       <Toasts />
@@ -245,11 +246,7 @@ function TopBar() {
         <button className="btn btn--primary btn--pill" onClick={() => input.current?.click()} disabled={s.uploading}>
           {s.uploading ? "Загружаю…" : "Загрузить JSON"}
         </button>
-        <Link href="/alerts" className="bell" aria-label={`Оповещения по инцидентам в колонках: ${s.activeAlerts}`}
-          title="Оповещения по инцидентам, которые сейчас лежат в колонках">
-          <Icon name="bell" size={30} />
-          {s.activeAlerts > 0 && <b>{s.activeAlerts > 99 ? "99+" : s.activeAlerts}</b>}
-        </Link>
+        <NotificationsBell />
       </div>
     </header>
   );

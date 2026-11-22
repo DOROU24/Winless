@@ -21,6 +21,8 @@ interface Store {
   version: number; // растёт после любых изменений данных — по нему перезапрашивается раскладка
   openIncidentId: string | null;
   activeAlerts: number;
+  unreadAlerts: number; // непрочитанные уведомления — число на колокольчике
+  markAlertsRead: (ids: number[]) => Promise<boolean>;
   ai: AiProgress | null;
   popups: AlertItem[];
   toasts: Toast[];
@@ -62,6 +64,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [version, setVersion] = useState(0);
   const [openIncidentId, setOpen] = useState<string | null>(null);
   const [activeAlerts, setActiveAlerts] = useState(0);
+  const [unreadAlerts, setUnreadAlerts] = useState(0);
+  const pendingRead = useRef(0); // отметки, отправленные на сервер, но ещё не подтверждённые
   const [ai, setAi] = useState<AiProgress | null>(null);
   const aiBusy = useRef(false);
   const [popups, setPopups] = useState<AlertItem[]>([]);
@@ -97,8 +101,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const pollAlerts = useCallback(async () => {
     try {
-      const r = await api.get<{ due: AlertItem[]; active: number; ai: AiProgress }>("/api/alerts/due");
+      const r = await api.get<{ due: AlertItem[]; active: number; unread: number; ai: AiProgress }>("/api/alerts/due");
       setActiveAlerts(r.active);
+      setUnreadAlerts(Math.max(0, r.unread - pendingRead.current));
       setAi(r.ai);
       const busy = !!r.ai && (r.ai.running || r.ai.queuedUploads > 0);
       if (aiBusy.current && !busy) setVersion((v) => v + 1); // ИИ закончил — перерисовать доску с новыми ai.*
@@ -175,6 +180,24 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     [reloadMeta, bump, pollAlerts, toast],
   );
 
+  // Отметить уведомления прочитанными: бейдж уменьшается сразу, при ошибке сервера — откат и сообщение
+  const markAlertsRead = useCallback(async (ids: number[]) => {
+    if (!ids.length) return true;
+    pendingRead.current += ids.length;
+    setUnreadAlerts((u) => Math.max(0, u - ids.length));
+    try {
+      const r = await api.post<{ unread: number }>("/api/alerts/read", { ids });
+      pendingRead.current -= ids.length;
+      setUnreadAlerts(Math.max(0, r.unread - pendingRead.current));
+      return true;
+    } catch (e) {
+      pendingRead.current -= ids.length;
+      setUnreadAlerts((u) => u + ids.length);
+      toast(`Не удалось отметить уведомления прочитанными: ${(e as Error).message}`, "error");
+      return false;
+    }
+  }, [toast]);
+
   // Закрытие окна только убирает его с экрана, в базу ничего не пишется.
   const dismissPopup = useCallback((id: number) => setPopups((p) => p.filter((x) => x.id !== id)), []);
 
@@ -201,7 +224,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const value: Store = {
     fields, fieldMap, boards, activeBoardId, activeBoard, settings, snapshots, lastUpload, version,
-    openIncidentId, activeAlerts, ai, popups, toasts, uploading, setActiveBoard, reloadBoards, reloadMeta, bump,
+    openIncidentId, activeAlerts, unreadAlerts, markAlertsRead, ai, popups, toasts, uploading, setActiveBoard, reloadBoards, reloadMeta, bump,
     openIncident: setOpen, upload, toast, dismissPopup,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -222,7 +222,7 @@ def test_alerts_read_only(client):
     client.get("/api/alerts/due")
     r = upload(client, "02_new_critical.json")
     assert r["newAlerts"] >= 1
-    al = [a for a in client.get("/api/alerts").json() if a["incidentId"] == ids["new_crit"]]
+    al = [a for a in client.get("/api/alerts").json()["items"] if a["incidentId"] == ids["new_crit"]]
     assert len(al) == 1 and al[0]["level"] == "critical" and al[0]["mode"] == "sound"
     assert al[0]["repeatMin"] is None and al[0]["inColumn"] is True  # правило 1: окно и звук, без повтора
     assert "acked" not in al[0]
@@ -267,7 +267,7 @@ def test_alert_repeat_while_in_column(client):
     upload(client, "02_new_critical.json")  # c1 больше не новый и выходит из колонки
     rewind()
     assert ids["c1"] not in due_here()
-    c1_alert = [a for a in client.get("/api/alerts").json() if a["incidentId"] == ids["c1"] and "Новые критические" in a["columns"]]
+    c1_alert = [a for a in client.get("/api/alerts").json()["items"] if a["incidentId"] == ids["c1"] and "Новые критические" in a["columns"]]
     assert c1_alert and c1_alert[0]["inColumn"] is False
 
 
@@ -350,7 +350,7 @@ def test_new_board_does_not_realert(client):
     upload(client, "01_now.json")
     set_now(client)
     client.get("/api/alerts/due")
-    before = len(client.get("/api/alerts").json())
+    before = len(client.get("/api/alerts").json()["items"])
     for tpl in ("focus", "mts"):
         client.post("/api/boards/from-template", json={"template": tpl})
     b = client.post("/api/boards", json={"name": "Своя"}).json()
@@ -361,7 +361,7 @@ def test_new_board_does_not_realert(client):
     client.patch(f"/api/boards/{dup['id']}", json={"mode": "first"})
     due = client.get("/api/alerts/due").json()["due"]
     assert due == [], [a["column"] for a in due]
-    assert len(client.get("/api/alerts").json()) == before
+    assert len(client.get("/api/alerts").json()["items"]) == before
     # а новая загрузка с новым критическим по-прежнему оповещает, в том числе на новых досках
     r = upload(client, "02_new_critical.json")
     assert r["newAlerts"] >= 1
@@ -680,3 +680,22 @@ def test_overdue_risk_from_similar_history(client, monkeypatch):
     # за сутки до срока риска нет
     set_now(client, (deadline - timedelta(hours=20)).isoformat().replace("+00:00", "Z"))
     assert client.get(f"/api/incidents/{ids['disk_new']}").json()["calc"]["ai.overdueRisk"] is False
+
+
+def test_alerts_read_mark_and_unread_count(client):
+    """Отметка «прочитано»: уменьшает счётчик непрочитанных, повторная отметка ничего не меняет, инциденты не трогает."""
+    for f in FILES[:3]:
+        upload(client, f)
+    set_now(client)
+    due = client.get("/api/alerts/due").json()
+    body = client.get("/api/alerts").json()
+    assert body["unread"] == due["unread"] and body["unread"] > 0
+    unread_ids = [a["id"] for a in body["items"] if not a["read"]]
+    first = unread_ids[:2]
+    r = client.post("/api/alerts/read", json={"ids": first}).json()
+    assert r["marked"] == len(first) and r["unread"] == body["unread"] - len(first)
+    again = client.post("/api/alerts/read", json={"ids": first}).json()
+    assert again["marked"] == 0 and again["unread"] == r["unread"]
+    items = {a["id"]: a for a in client.get("/api/alerts").json()["items"]}
+    assert all(items[i]["read"] and items[i]["readAt"] for i in first)
+    assert client.post("/api/alerts/read", json={"ids": []}).json()["marked"] == 0
