@@ -177,7 +177,7 @@ export default function WallPage() {
           <label className="wall-bar__item">
             <span>Мигать критической, если не взяли</span>
             <select value={blinkOf(wall).stuckMin} onChange={(e) => update({ stuckMin: Number(e.target.value) })}>
-              {[5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>за {m} мин</option>)}
+              {[1, 5, 10, 15, 30, 60].map((m) => <option key={m} value={m}>за {m} мин</option>)}
               <option value={0}>Не мигать</option>
             </select>
           </label>

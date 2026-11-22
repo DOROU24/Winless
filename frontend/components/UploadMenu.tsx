@@ -7,13 +7,34 @@ import { Icon } from "./Icon";
 // Кнопка «Загрузить JSON» с меню: файл с компьютера, готовые выгрузки тестового стенда и очистка данных для демо.
 
 // Файлы лежат в frontend/public/demo. Порядок — как их выгружает ITSM каждые 15 минут.
+// exported — момент выгрузки, к которому привязаны даты внутри файла (02:00 МСК = 23:00 UTC).
 const DEMO_FILES = [
-  { file: "01_winless_0200.json", time: "02:00" },
-  { file: "02_winless_0215.json", time: "02:15" },
-  { file: "03_winless_0230.json", time: "02:30" },
-  { file: "04_winless_0245.json", time: "02:45" },
-  { file: "05_winless_0300.json", time: "03:00" },
+  { file: "01_winless_0200.json", time: "02:00", exported: "2026-11-21T23:00:00Z" },
+  { file: "02_winless_0215.json", time: "02:15", exported: "2026-11-21T23:15:00Z" },
+  { file: "03_winless_0230.json", time: "02:30", exported: "2026-11-21T23:30:00Z" },
+  { file: "04_winless_0245.json", time: "02:45", exported: "2026-11-21T23:45:00Z" },
+  { file: "05_winless_0300.json", time: "03:00", exported: "2026-11-22T00:00:00Z" },
 ];
+
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+
+/**
+ * Даты выгрузки стенда — к текущему времени: файл выглядит так, будто ITSM выгрузил его только что.
+ * Все даты сдвигаются на одно и то же время, поэтому сроки, время назначения и возраст инцидентов
+ * относительно момента выгрузки не меняются. Пустые даты ITSM (0001-01-01) не трогаем.
+ */
+function toNow(records: Record<string, unknown>[], exported: string): Record<string, unknown>[] {
+  const shift = Date.now() - Date.parse(exported);
+  return records.map((r) => {
+    const out: Record<string, unknown> = { ...r };
+    for (const [k, v] of Object.entries(r)) {
+      if (typeof v !== "string" || !ISO.test(v) || v.startsWith("0001")) continue;
+      const t = Date.parse(v);
+      if (!Number.isNaN(t)) out[k] = new Date(t + shift).toISOString().replace(/\.\d{3}Z$/, "Z");
+    }
+    return out;
+  });
+}
 
 export function UploadMenu() {
   const s = useStore();
@@ -42,13 +63,13 @@ export function UploadMenu() {
     };
   }, [open]);
 
-  const loadDemo = async (file: string) => {
+  const loadDemo = async (file: string, exported: string) => {
     close();
     try {
-      const r = await fetch(`/demo/${file}`);
+      const r = await fetch(`/demo/${file}`, { cache: "no-store" });
       if (!r.ok) throw new Error(`Не нашёл файл ${file}`);
-      const blob = await r.blob();
-      await s.upload([new File([blob], file, { type: "application/json" })]);
+      const data = toNow(await r.json(), exported);
+      await s.upload([new File([JSON.stringify(data)], file, { type: "application/json" })]);
     } catch (e) {
       s.toast((e as Error).message, "error");
     }
@@ -84,9 +105,9 @@ export function UploadMenu() {
           <button role="menuitem" className="upload-menu__item" onClick={() => { close(); input.current?.click(); }}>
             <Icon name="upload" size={16} /> С компьютера…
           </button>
-          <p className="upload-menu__label">Выгрузки тестового стенда</p>
+          <p className="upload-menu__label">Выгрузки тестового стенда · даты на текущее время</p>
           {DEMO_FILES.map((d) => (
-            <button key={d.file} role="menuitem" className="upload-menu__item" onClick={() => loadDemo(d.file)}>
+            <button key={d.file} role="menuitem" className="upload-menu__item" onClick={() => loadDemo(d.file, d.exported)}>
               <span className="upload-menu__time">{d.time}</span>
               <span className="upload-menu__file">{d.file}</span>
             </button>
