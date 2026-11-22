@@ -18,7 +18,8 @@ import { ColumnEditor } from "@/components/ColumnEditor";
 import { Icon } from "@/components/Icon";
 import { NewBoardDialog } from "@/components/AppShell";
 import { Modal } from "@/components/Modal";
-import { blinkOf, nonEmptyFirst } from "@/lib/attention";
+import { blinkOf, nonEmptyFirst, stuckCount } from "@/lib/attention";
+import { Siren } from "@/components/Siren";
 
 export default function BoardPage() {
   const s = useStore();
@@ -89,8 +90,8 @@ export default function BoardPage() {
         <div className="notice">
           <Icon name="upload" size={18} />
           <div>
-            <strong>Загрузите первый снимок.</strong> Перетащите JSON-выгрузку в окно или нажмите «Загрузить JSON». Для
-            демо возьмите файлы из папки <code>demo_data</code> по порядку.
+            <strong>Загрузите первый снимок.</strong> Перетащите JSON-выгрузку в окно или нажмите «Загрузить JSON».
+            Там же есть выгрузки тестового стенда — загружайте их по порядку времени.
           </div>
         </div>
       )}
@@ -138,6 +139,8 @@ export default function BoardPage() {
           }}
         />
       )}
+      <Siren count={stuckCount(layout.columns, blinkOf(board.wallLayout))} durSec={blinkOf(board.wallLayout).sirenDur}
+        pauseSec={blinkOf(board.wallLayout).sirenSec} />
       {boardSettings && <BoardSettings board={board} onClose={() => setBoardSettings(false)} />}
       {newBoard && <NewBoardDialog onClose={() => setNewBoard(false)} />}
     </div>

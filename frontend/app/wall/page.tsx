@@ -6,7 +6,8 @@ import { useStore } from "@/lib/store";
 import { fmtDuration, LEVEL_LABEL } from "@/lib/format";
 import { Fuse } from "@/components/ColumnView";
 import { Icon } from "@/components/Icon";
-import { blinkOf, isFresh, isStuck, newLabel, orderCards, orderTiles, useNow, type BlinkOpts } from "@/lib/attention";
+import { Siren } from "@/components/Siren";
+import { blinkOf, stuckCount, isFresh, isStuck, newLabel, orderCards, orderTiles, useNow, type BlinkOpts } from "@/lib/attention";
 
 // Экран на стене: колонки доски — плитки на сетке 12 × N. В обычном режиме без кнопок.
 // В режиме настройки плитки двигаются, растягиваются, скрываются; раскладка хранится в настройках доски.
@@ -187,6 +188,21 @@ export default function WallPage() {
               <option value="soft">Мягкое — рамка</option>
             </select>
           </label>
+          <label className="wall-bar__item">
+            <span>Сирена звучит</span>
+            <select value={blinkOf(wall).sirenDur} onChange={(e) => update({ sirenDur: Number(e.target.value) })}
+              disabled={blinkOf(wall).sirenSec === 0}>
+              {[10, 20, 30, 60].map((v) => <option key={v} value={v}>{v} с</option>)}
+            </select>
+          </label>
+          <label className="wall-bar__item">
+            <span>и повторяется</span>
+            <select value={blinkOf(wall).sirenSec} onChange={(e) => update({ sirenSec: Number(e.target.value) })}>
+              {([[60, "через 1 мин"], [120, "через 2 мин"], [300, "через 5 мин"], [600, "через 10 мин"], [900, "через 15 мин"]] as const)
+                .map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              <option value={0}>Сирена выключена</option>
+            </select>
+          </label>
           <label className="check check--inline">
             <input type="checkbox" checked={o.showSummary} onChange={(e) => update({ showSummary: e.target.checked })} />
             <span>Сводка</span>
@@ -230,6 +246,7 @@ export default function WallPage() {
             onChange={(patch) => updateTile(c.id, patch)} openIncident={s.openIncident} />
         ))}
       </WallGrid>
+      {!editing && <Siren count={stuckCount(visible, blinkOf(wall))} durSec={blinkOf(wall).sirenDur} pauseSec={blinkOf(wall).sirenSec} />}
       {empty.length > 0 && (
         <div className="wall-empty" aria-label="Колонки без задач">
           <span>Сейчас пусто:</span>

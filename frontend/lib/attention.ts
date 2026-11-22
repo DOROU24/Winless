@@ -25,10 +25,20 @@ export function newLabel(c: CardData, now = Date.now(), freshMin = FRESH_MIN): s
 }
 
 /** Мигание без рук: какие задачи мигают и как. Значения по умолчанию — как просили эксперты. */
-export const BLINK_DEFAULTS = { stuckMin: 10, blink: "strong" } as const;
-export type BlinkOpts = { stuckMin: number; blink: "strong" | "soft" };
-export function blinkOf(w: { stuckMin?: number; blink?: "strong" | "soft" } | null | undefined): BlinkOpts {
-  return { stuckMin: w?.stuckMin ?? BLINK_DEFAULTS.stuckMin, blink: w?.blink ?? BLINK_DEFAULTS.blink };
+export const BLINK_DEFAULTS = { stuckMin: 10, blink: "strong", sirenSec: 300, sirenDur: 30 } as const;
+export type BlinkOpts = { stuckMin: number; blink: "strong" | "soft"; sirenSec: number; sirenDur: number };
+export function blinkOf(
+  w: { stuckMin?: number; blink?: "strong" | "soft"; sirenSec?: number; sirenDur?: number } | null | undefined,
+): BlinkOpts {
+  return { stuckMin: w?.stuckMin ?? BLINK_DEFAULTS.stuckMin, blink: w?.blink ?? BLINK_DEFAULTS.blink,
+    sirenSec: w?.sirenSec ?? BLINK_DEFAULTS.sirenSec, sirenDur: w?.sirenDur ?? BLINK_DEFAULTS.sirenDur };
+}
+
+/** Сколько разных задач на доске сейчас мигают (критические, которые не взяли в работу). */
+export function stuckCount(cols: LayoutColumn[], o: BlinkOpts): number {
+  const ids = new Set<string>();
+  for (const c of cols) for (const k of c.cards) if (isStuck(k, c.level, o)) ids.add(k.id);
+  return ids.size;
 }
 
 /** Критическая задача, которую не распределили: в колонке «критический» и в «Назначен» дольше stuckMin минут. */

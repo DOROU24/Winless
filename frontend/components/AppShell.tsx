@@ -1,6 +1,7 @@
 "use client";
 
 import { CriticalBanner, SoundHint } from "./CriticalBanner";
+import { UploadMenu } from "./UploadMenu";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -217,7 +218,6 @@ export function NewBoardDialog({ onClose }: { onClose: () => void }) {
 
 function TopBar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void }) {
   const s = useStore();
-  const input = useRef<HTMLInputElement>(null);
   return (
     <header className="top">
       <button className="top__side-toggle" onClick={onToggle} aria-expanded={!narrow} aria-controls="side-panel"
@@ -237,20 +237,7 @@ function TopBar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void })
           </span>
         )}
         <Assistant />
-        <input
-          ref={input}
-          type="file"
-          accept=".json,application/json"
-          multiple
-          hidden
-          onChange={(e) => {
-            if (e.target.files) s.upload(e.target.files);
-            e.target.value = "";
-          }}
-        />
-        <button className="btn btn--primary btn--pill" onClick={() => input.current?.click()} disabled={s.uploading}>
-          {s.uploading ? "Загружаю…" : "Загрузить JSON"}
-        </button>
+        <UploadMenu />
         <NotificationsBell />
         <UserMenu />
       </div>

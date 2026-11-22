@@ -35,6 +35,7 @@ interface Store {
   bump: () => void;
   openIncident: (id: string | null) => void;
   upload: (files: FileList | File[]) => Promise<void>;
+  clearData: () => Promise<{ snapshots: number; incidents: number }>; // очистка базы для демо
   toast: (text: string, kind?: Toast["kind"]) => void;
   dismissPopup: (id: number) => void;
 }
@@ -85,6 +86,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [critical, setCritical] = useState<CriticalItem[]>([]);
   const [soundReady, setSoundReady] = useState(false);
   const lastSnapshot = useRef<number | null | undefined>(undefined);
+  const boardsVersion = useRef<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [uploading, setUploading] = useState(false);
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -124,7 +126,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         } catch { alertsSince.current = ""; }
       }
       const q = alertsSince.current ? `?since=${encodeURIComponent(alertsSince.current)}` : "";
-      const r = await api.get<{ due: AlertItem[]; active: number; unread: number; now: string; ai: AiProgress; snapshotId?: number | null }>(
+      const r = await api.get<{ due: AlertItem[]; active: number; unread: number; now: string; ai: AiProgress; snapshotId?: number | null; boardsVersion?: string }>(
         `/api/alerts/due${q}`);
       if (typeof r.now === "string" && r.now) {
         alertsSince.current = r.now;
@@ -133,6 +135,14 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       // кто-то загрузил новую выгрузку — перерисовать доску сразу, не дожидаясь планового обновления
       if (lastSnapshot.current !== undefined && r.snapshotId !== lastSnapshot.current) setVersion((v) => v + 1);
       lastSnapshot.current = r.snapshotId ?? null;
+      // доски или колонки поменяли в другой вкладке или на другом компьютере — перечитать и перерисовать
+      if (r.boardsVersion) {
+        if (boardsVersion.current !== null && r.boardsVersion !== boardsVersion.current) {
+          reloadBoards().catch(() => undefined);
+          setVersion((v) => v + 1);
+        }
+        boardsVersion.current = r.boardsVersion;
+      }
       setActiveAlerts(r.active);
       setUnreadAlerts(Math.max(0, r.unread - pendingRead.current));
       setAi(r.ai);
@@ -239,6 +249,18 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     [reloadMeta, bump, pollAlerts, toast],
   );
 
+  // Очистка базы для демо: данные выгрузок уходят у всех, доски и правила остаются
+  const clearData = useCallback(async () => {
+    const r = await api.del<{ snapshots: number; incidents: number }>("/api/snapshots");
+    setPopups([]);
+    setCritical([]);
+    setLastUpload(null);
+    await reloadMeta();
+    bump();
+    await pollAlerts();
+    return r;
+  }, [reloadMeta, bump, pollAlerts]);
+
   // Отметить уведомления прочитанными: бейдж уменьшается сразу, при ошибке сервера — откат и сообщение
   const markAlertsRead = useCallback(async (ids: number[]) => {
     if (!ids.length) return true;
@@ -284,7 +306,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const value: Store = {
     fields, fieldMap, boards, activeBoardId, activeBoard, settings, snapshots, lastUpload, version,
     openIncidentId, activeAlerts, unreadAlerts, markAlertsRead, ai, popups, critical, soundReady, toasts, uploading, setActiveBoard, reloadBoards, reloadMeta, bump,
-    openIncident: setOpen, upload, toast, dismissPopup,
+    openIncident: setOpen, upload, clearData, toast, dismissPopup,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

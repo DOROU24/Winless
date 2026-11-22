@@ -1,6 +1,8 @@
 """FastAPI: роуты приложения."""
 from __future__ import annotations
 
+import json
+
 import logging
 from datetime import timezone
 from contextlib import asynccontextmanager
@@ -136,6 +138,22 @@ def _after_ingest(s: Session) -> dict:
     board = _maybe_board(s, get_setting(s, "active_board_id"))
     counts = column_counts(s, board, ctx) if board else []
     return {"autoLinks": n_links, "newAlerts": len(new_alerts), "columns": counts}
+
+
+@app.delete("/api/snapshots")
+def clear_snapshots(s: Session = DB):
+    """Очистка данных для демо и тестового стенда: все загрузки, инциденты, их история, связи, оповещения и
+    результаты ИИ. Доски, колонки, правила, пользователи и настройки остаются. Данные общие — очищаются у всех."""
+    from .db import AiResult, Alert, AlertMembership, FieldCatalog, IncidentEvent, IncidentVersion, Link
+    from .templates import seed_fields
+    counts = {"snapshots": s.execute(select(func.count(Snapshot.id))).scalar() or 0,
+              "incidents": s.execute(select(func.count(Incident.id))).scalar() or 0}
+    for model in (AlertMembership, Alert, Link, AiResult, IncidentEvent, IncidentVersion, Incident, Snapshot, FieldCatalog):
+        s.execute(delete(model))
+    s.flush()
+    seed_fields(s)  # базовые поля выгрузки возвращаем: без них конструктор правил пустой
+    s.commit()
+    return {"ok": True, **counts}
 
 
 @app.post("/api/snapshots")
@@ -427,7 +445,10 @@ def _clean_wall_layout(raw: dict | None) -> dict | None:
             "showSummary": bool(raw.get("showSummary", True)),
             # мигание критической задачи, которую не взяли в работу дольше stuckMin минут (0 — выключено)
             "stuckMin": int(num(raw.get("stuckMin"), 0, 240, 10)),
-            "blink": pick(raw.get("blink"), ("strong", "soft"), "strong")}
+            "blink": pick(raw.get("blink"), ("strong", "soft"), "strong"),
+            # сирена, пока есть невзятые критические: звучит sirenDur секунд, потом пауза sirenSec (0 — выключена)
+            "sirenSec": int(num(raw.get("sirenSec"), 0, 3600, 300)),
+            "sirenDur": int(num(raw.get("sirenDur"), 3, 300, 30))}
 
 
 @app.delete("/api/boards/{board_id}")
@@ -753,7 +774,23 @@ def get_due_alerts(since: str | None = None, s: Session = DB):
     from .llm.pipeline import worker
     latest = s.execute(select(Snapshot.id).order_by(Snapshot.id.desc()).limit(1)).scalar()
     return {"due": due, "active": alerts_mod.active_count(s), "unread": alerts_mod.unread_count(s),
-            "now": now.isoformat() + "Z", "ai": worker.view(), "snapshotId": latest}
+            "now": now.isoformat() + "Z", "ai": worker.view(), "snapshotId": latest, "boardsVersion": _boards_version(s)}
+
+
+def _boards_version(s: Session) -> str:
+    """Отпечаток досок и колонок пользователя. Поменяли правило или порядок на одном компьютере —
+    остальные открытые экраны (например, экран на стене) увидят это при ближайшем опросе и перерисуются."""
+    import hashlib
+    q = select(Board).order_by(Board.id)
+    if CURRENT_USER.get() is not None:
+        q = q.where(Board.owner_id == CURRENT_USER.get())
+    parts = []
+    for b in s.execute(q).scalars():
+        parts.append([b.id, b.name, b.mode, b.hide_disappeared, b.wall_layout])
+        for c in s.execute(select(Column).where(Column.board_id == b.id).order_by(Column.id)).scalars():
+            parts.append([c.id, c.position, c.name, c.color, c.rule, c.sort_field, c.sort_args, c.sort_dir, c.limit,
+                          c.card_fields, c.level, c.alert, c.repeat_min, c.collapsed, c.group_similar])
+    return hashlib.sha1(json.dumps(parts, ensure_ascii=False, default=str, sort_keys=True).encode()).hexdigest()[:16]
 
 
 # ---- связи ----------------------------------------------------------------------------------

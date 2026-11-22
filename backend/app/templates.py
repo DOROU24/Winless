@@ -13,6 +13,7 @@ from .rules import or_of
 
 COORD = "КЦ ИТ Координаторы Массовых Инцидентов"
 ACTIVE = {"field": "stateId", "cmp": "in", "value": [0, 2]}
+NOT_CLOSED = {"field": "stateId", "cmp": "not_in", "value": [10]}  # всё, кроме «Закрыт»
 DEFAULT_CARD_FIELDS = ["id", "productName", "submitDate", "assignedGroupName", "assignedEmployee", "state", "deadline"]
 LEVEL_RANK = {"info": 0, "elevated": 1, "critical": 2}
 ALERT_RANK = {"off": 0, "popup": 1, "sound": 2}
@@ -122,17 +123,19 @@ TEMPLATES = {
     },
     "mts": {
         "name": "Задание МТС", "mode": "all",
-        "description": "Четыре группы из кейса: критические, на координаторах, высокий приоритет, исследование.",
+        "description": "Четыре группы из задания: критические, на координаторах, высокий приоритет, исследование. "
+                       "Во всех — только незакрытые инциденты.",
+        # По заданию: критические — приоритет «Наивысший» (срок не важен), во всех колонках — не «Закрыт».
         "columns": [
-            {"name": "Критические", "rule": AND(C("priorityId", "eq", 4), ACTIVE), "level": "critical",
+            {"name": "Критические", "rule": AND(C("priorityId", "eq", 4), NOT_CLOSED), "level": "critical",
              "alert": "sound", "sort": ("calc.deadlineLeftPct", "asc")},
             {"name": "Назначены на координаторов",
-             "rule": AND(C("assignedGroupName", "eq", COORD), C("stateId", "not_in", [10])), "level": "elevated",
+             "rule": AND(C("assignedGroupName", "eq", COORD), NOT_CLOSED), "level": "elevated",
              "alert": "popup", "sort": ("calc.ageMin", "desc")},
-            {"name": "Высокий приоритет", "rule": AND(C("priorityId", "eq", 3), ACTIVE), "level": "elevated",
+            {"name": "Высокий приоритет", "rule": AND(C("priorityId", "eq", 3), NOT_CLOSED), "level": "elevated",
              "alert": "off", "sort": ("calc.deadlineLeftPct", "asc")},
-            {"name": "Исследование ситуации", "rule": C("stateId", "eq", 20), "level": "info", "alert": "off",
-             "sort": ("submitDate", "desc")},
+            {"name": "Исследование ситуации", "rule": AND(C("stateId", "eq", 20), NOT_CLOSED), "level": "info",
+             "alert": "off", "sort": ("submitDate", "desc")},
         ],
     },
     "empty": {"name": "Пустая доска", "mode": "all", "description": "Без колонок — соберите свою.", "columns": []},
@@ -246,9 +249,30 @@ def _renumber_column_presets(s: Session) -> None:
     set_setting(s, "presets_renumbered_v1", True)
 
 
+# Прежние правила доски «Задание МТС». Колонки, где правило осталось таким, как создал шаблон, переводим на
+# правила по заданию; колонки, которые пользователь уже поменял сам, не трогаем.
+_OLD_MTS_RULES = {
+    "Критические": AND(C("priorityId", "eq", 4), ACTIVE),
+    "Высокий приоритет": AND(C("priorityId", "eq", 3), ACTIVE),
+    "Исследование ситуации": C("stateId", "eq", 20),
+}
+
+
+def _upgrade_mts_columns(s: Session) -> None:
+    new = {c["name"]: c["rule"] for c in TEMPLATES["mts"]["columns"]}
+    boards = [b.id for b in s.execute(select(Board).where(Board.template == "mts")).scalars()]
+    if not boards:
+        return
+    for col in s.execute(select(Column).where(Column.board_id.in_(boards))).scalars():
+        old = _OLD_MTS_RULES.get(col.name)
+        if old is not None and col.rule == old:
+            col.rule = new[col.name]
+
+
 def seed(s: Session) -> None:
     """Значения по умолчанию при первом запуске. Повторно ничего не перезаписывает."""
     seed_fields(s)
+    _upgrade_mts_columns(s)
     # Каталог готовых правил всегда пересоздаётся из кода: в интерфейсе он не редактируется, а правило,
     # добавленное в колонку, копируется в неё и дальше живёт там.
     s.execute(delete(RulePreset).where(RulePreset.custom.is_not(True)))  # свои правила пользователя не трогаем

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useStore } from "@/lib/store";
 import { useNow } from "@/lib/attention";
 import { Icon } from "./Icon";
@@ -18,7 +18,9 @@ export function CriticalBanner() {
   const items = s.critical;
   const top = items[0];
   const age = top ? now - top.at : Infinity;
-  const big = age < BANNER_MS;
+  // крестик сворачивает баннер досрочно; следующий критический снова покажется крупно
+  const [closedId, setClosedId] = useState<number | null>(null);
+  const big = age < BANNER_MS && top?.alert.id !== closedId;
 
   // заголовок вкладки мигает, пока висит баннер: видно и на свёрнутой вкладке
   useEffect(() => {
@@ -46,6 +48,9 @@ export function CriticalBanner() {
             <span>пришёл в {time}</span>
             {more > 0 && <span>ещё {more} за полчаса</span>}
           </span>
+        </button>
+        <button className="crit-banner__close" onClick={() => setClosedId(a.id)} aria-label="Закрыть баннер" title="Закрыть">
+          <Icon name="close" size={22} />
         </button>
         <i className="crit-banner__timer" style={{ animationDuration: `${BANNER_MS}ms` }} key={a.id} aria-hidden />
       </div>

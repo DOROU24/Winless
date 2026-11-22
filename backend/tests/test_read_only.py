@@ -1,6 +1,7 @@
 """Гарантия «дашборд только для просмотра».
 
-Ни один эндпоинт, кроме POST /api/snapshots, не меняет таблицы incidents, incident_versions и incident_events.
+Ни один эндпоинт, кроме загрузки снимка (POST /api/snapshots) и очистки данных для демо (DELETE /api/snapshots),
+не меняет таблицы incidents, incident_versions и incident_events.
 Таблицу links меняет только пересчёт автосвязей: при загрузке снимка и при изменении правил автосвязей
 (/api/link-rules). Тест сам обходит все маршруты приложения, поэтому новый эндпоинт не проскочит мимо проверки.
 """
@@ -94,7 +95,8 @@ def test_no_endpoint_except_upload_changes_incidents(client):
     client.get("/api/alerts/due")
 
     # вход и выход не трогают инциденты; выход здесь разлогинил бы тест посреди обхода
-    routes = [(m, p) for m, p in all_routes() if not (m == "POST" and p == "/api/snapshots") and not p.startswith("/api/auth/")]
+    routes = [(m, p) for m, p in all_routes() if not (m in ("POST", "DELETE") and p == "/api/snapshots")
+              and not p.startswith("/api/auth/")]
     # удаления в конце, чтобы остальным эндпоинтам было на чём работать
     routes.sort(key=lambda mp: (mp[0] == "DELETE", mp[1]))
     assert len(routes) > 20, "маршруты не найдены"
@@ -164,3 +166,18 @@ def test_migration_cleans_old_database(client):
     assert not {"acked", "acked_at"} & {c["name"] for c in insp.get_columns("alerts")}
     with engine.connect() as conn:
         assert conn.execute(text("SELECT COUNT(*) FROM links WHERE source = 'manual'")).scalar() == 0
+
+
+def test_clear_snapshots_for_demo(client):
+    """Очистка для демо: данные выгрузок уходят, доски и правила остаются, после неё можно грузить заново."""
+    upload(client, "00_history.json")
+    upload(client, "01_now.json")
+    boards_before = [b["id"] for b in client.get("/api/boards").json()["boards"]]
+    r = client.delete("/api/snapshots")
+    assert r.status_code == 200 and r.json()["incidents"] > 0
+    assert client.get("/api/incidents?limit=5").json() == []
+    assert client.get("/api/snapshots").json() == []
+    assert [b["id"] for b in client.get("/api/boards").json()["boards"]] == boards_before
+    assert any(f["key"] == "priorityId" for f in client.get("/api/fields").json())
+    upload(client, "01_now.json")
+    assert client.get("/api/incidents?limit=5").json()

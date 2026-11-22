@@ -85,6 +85,8 @@ export interface WallLayout {
   showSummary?: boolean;
   stuckMin?: number; // критическая задача мигает, если её не взяли в работу дольше стольких минут; 0 — выключено
   blink?: "strong" | "soft"; // сильное — мигает вся карточка, мягкое — рамка
+  sirenSec?: number; // сирена, пока есть невзятые критические: пауза между включениями, секунд; 0 — выключена
+  sirenDur?: number; // сколько секунд звучит сирена за одно включение
 }
 
 export interface CardData {
@@ -242,7 +244,7 @@ export class ApiError extends Error {
 }
 
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
-  const init: RequestInit = { method, headers: {} };
+  const init: RequestInit = { method, headers: {}, cache: "no-store" };
   if (body instanceof FormData) init.body = body;
   else if (body !== undefined) {
     init.body = JSON.stringify(body);
