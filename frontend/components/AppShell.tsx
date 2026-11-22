@@ -104,6 +104,11 @@ function Sidebar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void }
 
   return (
     <aside className="side">
+      <button className="side__toggle" onClick={onToggle} aria-expanded={!narrow}
+        aria-label={narrow ? "Развернуть панель" : "Свернуть панель"} title={narrow ? "Развернуть панель" : "Свернуть панель"}>
+        <Icon name="panel" />
+        <span>Свернуть панель</span>
+      </button>
       <nav className="side__nav" aria-label="Разделы">
         {NAV.map((n) => (
           <Link key={n.href} href={n.href} className={`side__link ${path === n.href ? "is-active" : ""}`} title={narrow ? n.label : undefined}>
@@ -143,11 +148,6 @@ function Sidebar({ narrow, onToggle }: { narrow: boolean; onToggle: () => void }
         </ul>
       </div>
       <SnapshotInfo />
-      <button className="side__toggle" onClick={onToggle} aria-expanded={!narrow}
-        aria-label={narrow ? "Развернуть панель" : "Свернуть панель"} title={narrow ? "Развернуть панель" : "Свернуть панель"}>
-        <Icon name="panel" />
-        <span>Свернуть панель</span>
-      </button>
       {creating && <NewBoardDialog onClose={() => setCreating(false)} />}
     </aside>
   );

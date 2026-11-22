@@ -946,3 +946,7 @@ input:focus, select:focus, textarea:focus, input:focus-visible, select:focus-vis
   .notif { left: 12px; right: 12px; width: auto; top: 64px; border: 1px solid var(--line); border-radius: 18px; }
 }
 @media (prefers-reduced-motion: reduce) { .notif, .notif__skeleton { animation: none; } }
+
+/* кнопка сворачивания панели — в самом верху панели */
+.side__toggle { margin: -8px 0 10px; padding: 6px 4px; }
+.shell--narrow .side__toggle { margin: -4px 0 10px; }
