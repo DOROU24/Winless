@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, delete, select
 from sqlalchemy.orm import Session
@@ -151,24 +151,29 @@ def active_count(s: Session) -> int:
     return sum(1 for a in s.execute(select(Alert)).scalars() if _in_column(a, members))
 
 
-def due_alerts(s: Session) -> list[dict]:
-    """Оповещения, которые нужно показать сейчас: новые и те, у которых подошёл повтор.
+def due_alerts(s: Session, since: datetime | None, now: datetime | None = None) -> list[dict]:
+    """Оповещения, которые сработали в промежутке (since, now]: новые и подошедшие повторы.
 
-    Повтор идёт каждые N минут, пока инцидент остаётся в колонке. Меняются только служебные поля показа.
+    Сервер ничего не помечает: каждый браузер присылает время своего прошлого опроса и получает всё, что
+    сработало после него. Поэтому окно и звук получают все открытые пульты и экран на стене, а не только тот,
+    кто спросил первым. Повтор срабатывает в моменты «создано + k·N минут», пока инцидент лежит в колонке.
+    Без since (первый опрос браузера) возвращается пустой список — старое не всплывает при открытии страницы.
     """
-    now = utcnow()
+    now = now or utcnow()
+    if since is None or since >= now:
+        return []
+    since = max(since, now - timedelta(minutes=30))  # браузер долго спал — не вываливаем всё накопленное
     members = _memberships(s)
     due = []
-    for a in s.execute(select(Alert).where(Alert.fired_count == 0)).scalars():
-        due.append(a)
-    for a in s.execute(select(Alert).where(Alert.repeat_min.is_not(None), Alert.fired_count > 0)).scalars():
-        if (a.last_fired_at and now - a.last_fired_at >= timedelta(minutes=a.repeat_min)
-                and _in_column(a, members)):
+    for a in s.execute(select(Alert).where(Alert.created_at <= now)).scalars():
+        if since < a.created_at <= now:
             due.append(a)
-    for a in due:
-        a.fired_count += 1
-        a.last_fired_at = now
-    s.flush()
+            continue
+        if a.repeat_min and _in_column(a, members):
+            step = timedelta(minutes=a.repeat_min)
+            k_now, k_since = (now - a.created_at) // step, (since - a.created_at) // step
+            if k_now >= 1 and k_now > k_since:
+                due.append(a)
     incs = {i.id: i for i in s.execute(select(Incident).where(Incident.id.in_({a.incident_id for a in due})))
             .scalars()}
     cols = {c.id: c for c in s.execute(select(Column)).scalars()}

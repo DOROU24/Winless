@@ -73,9 +73,6 @@ export default function BoardPage() {
       <div className="board__head">
         <div className="board__title">
           <h1>{board.name}</h1>
-          <span className="muted">
-            {board.mode === "first" ? "Каждый инцидент только в одной колонке" : "Инцидент может быть в нескольких колонках"}
-          </span>
         </div>
         <div className="board__tools">
           <button className="btn" onClick={() => setEditing("new")}>
@@ -113,10 +110,9 @@ export default function BoardPage() {
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
           <SortableContext items={layout.columns.map((c) => c.id)} strategy={horizontalListSortingStrategy}>
             <div className="columns">
-              {layout.columns.map((c, i) => (
+              {layout.columns.map((c) => (
                 <ColumnView
                   key={c.id}
-                  index={i}
                   column={c}
                   onEdit={() => setEditing(c)}
                   onToggle={() => toggleCollapse(c)}

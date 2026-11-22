@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timezone
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -650,14 +651,20 @@ def read_alerts(body: ReadBody, s: Session = DB):
 
 
 @app.get("/api/alerts/due")
-def get_due_alerts(s: Session = DB):
-    """Опрашивается фронтендом: пересчитывает оповещения (правила по времени идут и без загрузок)."""
+def get_due_alerts(since: str | None = None, s: Session = DB):
+    """Опрашивается каждым открытым пультом: пересчитывает оповещения (правила по времени идут и без загрузок)
+    и отдаёт сработавшие после since — времени прошлого опроса этого браузера. Ответ несёт now — следующий since."""
+    from .db import utcnow
     alerts_mod.evaluate_alerts(s)
-    due = alerts_mod.due_alerts(s)
-    active = alerts_mod.active_count(s)
     s.commit()
+    now = utcnow()  # одна отметка времени: по ней и выборка, и следующий since — ничего не теряется на стыке
+    start = parse_dt(since) if since else None
+    if start is not None and start.tzinfo is not None:
+        start = start.astimezone(timezone.utc).replace(tzinfo=None)
+    due = alerts_mod.due_alerts(s, start, now)
     from .llm.pipeline import worker
-    return {"due": due, "active": active, "unread": alerts_mod.unread_count(s), "ai": worker.view()}
+    return {"due": due, "active": alerts_mod.active_count(s), "unread": alerts_mod.unread_count(s),
+            "now": now.isoformat() + "Z", "ai": worker.view()}
 
 
 # ---- связи ----------------------------------------------------------------------------------

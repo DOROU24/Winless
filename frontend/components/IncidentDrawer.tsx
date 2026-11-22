@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type IncidentDetail, type LinkItem } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { fmtDate, fmtValue, LEVEL_COLOR } from "@/lib/format";
@@ -37,11 +37,28 @@ export function IncidentDrawer({ id }: { id: string }) {
     load();
   }, [load, s.version]);
 
+  // Закрытие: Esc, крестик и клик по свободному месту страницы.
+  // Клики внутри окон поверх страницы (помощник, диалоги, уведомления, всплывающие окна) панель не закрывают.
+  const close = s.openIncident;
+  const drawer = useRef<HTMLElement>(null);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && s.openIncident(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || document.querySelector(".modal-back")) return; // сначала закрывается диалог
+      close(null);
+    };
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Element | null;
+      if (!t || drawer.current?.contains(t)) return;
+      if (t.closest(".assistant, .modal-back, .notif, .bell, .popups, .toasts, .assistant-launch")) return;
+      close(null);
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [s]);
+    document.addEventListener("pointerdown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [close]);
 
 
 
@@ -49,7 +66,7 @@ export function IncidentDrawer({ id }: { id: string }) {
   const f = (k: string) => fmtValue(s.fieldMap[k], data[k]);
 
   return (
-    <aside className="drawer" aria-label={`Инцидент ${id}`}>
+    <aside ref={drawer} className="drawer" aria-label={`Инцидент ${id}`}>
       <header className="drawer__head">
         <span className="mono">{id}</span>
         <span className="grow" />

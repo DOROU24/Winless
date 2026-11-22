@@ -8,23 +8,12 @@ import { useStore } from "@/lib/store";
 import { fmtDuration, fmtValue, LEVEL_LABEL } from "@/lib/format";
 import { Icon } from "./Icon";
 
-// Цвета колонок по макету: красный, фиолетовый, оранжевый, графит — по порядку на доске.
-// Цвет, который координатор выбрал сам, сохраняется; заменяются только старые цвета по умолчанию.
-const DESIGN_COLORS = ["#ff0032", "#3d14ff", "#ff8a1f", "#2b2d33"];
-const DEFAULT_COLORS = new Set(["#ff0032", "#f57c00", "#0070e5", "#8b7cf6"]);
-
-export function columnColor(color: string, index: number) {
-  return DEFAULT_COLORS.has((color || "").toLowerCase()) ? DESIGN_COLORS[index % DESIGN_COLORS.length] : color;
-}
-
 export function ColumnView({
   column,
-  index = 0,
   onEdit,
   onToggle,
 }: {
   column: LayoutColumn;
-  index?: number;
   onEdit: () => void;
   onToggle: () => void;
 }) {
@@ -32,7 +21,7 @@ export function ColumnView({
   const style = {
     transform: CSS.Translate.toString(transform),
     transition,
-    "--col": columnColor(column.color, index),
+    "--col": column.color, // цвет только из настроек колонки, от места на доске не зависит
   } as React.CSSProperties;
 
   if (column.collapsed) {

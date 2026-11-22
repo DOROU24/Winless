@@ -15,6 +15,18 @@ def set_now(client, when=DEMO_NOW):
     os.environ["MTS_NOW"] = when
 
 
+class Browser:
+    """Открытый пульт: опрашивает /api/alerts/due со временем своего прошлого опроса."""
+    def __init__(self, client):
+        self.client = client
+        self.since = client.get("/api/alerts/due").json()["now"]
+
+    def poll(self, since=None):
+        r = self.client.get("/api/alerts/due", params={"since": since or self.since}).json()
+        self.since = r["now"]
+        return r["due"]
+
+
 def preset_matches(client, pid):
     presets = {p["id"]: p for p in client.get("/api/presets").json()}
     r = client.post("/api/rules/preview", json={"rule": presets[pid]["rule"], "limit": 500}).json()
@@ -219,16 +231,16 @@ def test_alerts_read_only(client):
     upload(client, "00_history.json")
     upload(client, "01_now.json")
     set_now(client)
-    client.get("/api/alerts/due")
+    browser = Browser(client)
     r = upload(client, "02_new_critical.json")
     assert r["newAlerts"] >= 1
     al = [a for a in client.get("/api/alerts").json()["items"] if a["incidentId"] == ids["new_crit"]]
     assert len(al) == 1 and al[0]["level"] == "critical" and al[0]["mode"] == "sound"
     assert al[0]["repeatMin"] is None and al[0]["inColumn"] is True  # правило 1: окно и звук, без повтора
     assert "acked" not in al[0]
-    due = client.get("/api/alerts/due").json()["due"]
+    due = browser.poll()
     assert any(a["incidentId"] == ids["new_crit"] for a in due)
-    assert not any(a["incidentId"] == ids["new_crit"] for a in client.get("/api/alerts/due").json()["due"])
+    assert not any(a["incidentId"] == ids["new_crit"] for a in browser.poll())  # этому браузеру второй раз не показываем
     # повторная загрузка того же файла — новых оповещений нет
     assert upload(client, "02_new_critical.json")["newAlerts"] == 0
     # эндпоинтов подтверждения больше нет
@@ -250,22 +262,23 @@ def test_alert_repeat_while_in_column(client):
             {"field": "priorityId", "cmp": "eq", "value": 4}, {"field": "calc.isNew", "cmp": "is_true"}]},
         "alert": "popup", "repeatMin": 5}).json()
     upload(client, "01_now.json")  # оповещения приходят из-за новых данных
-    client.get("/api/alerts/due")  # первый показ всех оповещений
 
-    def rewind():
+    def rewind():  # «прошло 6 минут с момента оповещения»: сдвигаем время создания назад
         with SessionLocal() as s:
             for a in s.query(Alert).filter(Alert.column_ids.isnot(None)).all():
-                if col["id"] in (a.column_ids or []) and a.last_fired_at:
-                    a.last_fired_at -= timedelta(minutes=6)
+                if col["id"] in (a.column_ids or []):
+                    a.created_at -= timedelta(minutes=6)
             s.commit()
 
-    def due_here():
-        return {a["incidentId"] for a in client.get("/api/alerts/due").json()["due"] if "Новые критические" in a["columns"]}
+    def due_here():  # браузер последний раз опрашивал 2 минуты назад, то есть на 4-й минуте после оповещения
+        from app.db import utcnow
+        since = (utcnow() - timedelta(minutes=2)).isoformat() + "Z"
+        due = client.get("/api/alerts/due", params={"since": since}).json()["due"]
+        return {a["incidentId"] for a in due if "Новые критические" in a["columns"]}
 
     rewind()
-    assert ids["c1"] in due_here()  # всё ещё в колонке — повтор
+    assert ids["c1"] in due_here()  # всё ещё в колонке — повтор на 5-й минуте
     upload(client, "02_new_critical.json")  # c1 больше не новый и выходит из колонки
-    rewind()
     assert ids["c1"] not in due_here()
     c1_alert = [a for a in client.get("/api/alerts").json()["items"] if a["incidentId"] == ids["c1"] and "Новые критические" in a["columns"]]
     assert c1_alert and c1_alert[0]["inColumn"] is False
@@ -349,7 +362,7 @@ def test_new_board_does_not_realert(client):
     upload(client, "00_history.json")
     upload(client, "01_now.json")
     set_now(client)
-    client.get("/api/alerts/due")
+    browser = Browser(client)
     before = len(client.get("/api/alerts").json()["items"])
     for tpl in ("focus", "mts"):
         client.post("/api/boards/from-template", json={"template": tpl})
@@ -359,7 +372,7 @@ def test_new_board_does_not_realert(client):
     dup = client.post(f"/api/boards/{b['id']}/duplicate").json()
     client.patch(f"/api/boards/{b['id']}/columns/{c['id']}", json={"rule": {"field": "priorityId", "cmp": "gte", "value": 3}})
     client.patch(f"/api/boards/{dup['id']}", json={"mode": "first"})
-    due = client.get("/api/alerts/due").json()["due"]
+    due = browser.poll()
     assert due == [], [a["column"] for a in due]
     assert len(client.get("/api/alerts").json()["items"]) == before
     # а новая загрузка с новым критическим по-прежнему оповещает, в том числе на новых досках
@@ -699,3 +712,20 @@ def test_alerts_read_mark_and_unread_count(client):
     items = {a["id"]: a for a in client.get("/api/alerts").json()["items"]}
     assert all(items[i]["read"] and items[i]["readAt"] for i in first)
     assert client.post("/api/alerts/read", json={"ids": []}).json()["marked"] == 0
+
+
+def test_popups_reach_every_open_browser(client):
+    """Окно оповещения получает каждый открытый пульт, а не только тот, что загрузил файл и опросил первым."""
+    ids = demo_ids()
+    upload(client, "00_history.json")
+    upload(client, "01_now.json")
+    set_now(client)
+    uploader, colleague, wall = Browser(client), Browser(client), Browser(client)
+    upload(client, "02_new_critical.json")
+    first = uploader.poll()  # загрузивший опросил сразу
+    assert any(a["incidentId"] == ids["new_crit"] for a in first)
+    for other in (colleague, wall):  # остальные — на своём следующем опросе
+        assert any(a["incidentId"] == ids["new_crit"] for a in other.poll())
+        assert not any(a["incidentId"] == ids["new_crit"] for a in other.poll())
+    # первый опрос нового браузера старое не показывает
+    assert client.get("/api/alerts/due").json()["due"] == []

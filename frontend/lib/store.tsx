@@ -66,6 +66,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [activeAlerts, setActiveAlerts] = useState(0);
   const [unreadAlerts, setUnreadAlerts] = useState(0);
   const pendingRead = useRef(0); // отметки, отправленные на сервер, но ещё не подтверждённые
+  // Время прошлого опроса оповещений этим браузером: сервер отдаёт всё, что сработало после него.
+  // Так окно и звук получает каждый открытый пульт, а не только тот, кто загрузил файл.
+  const alertsSince = useRef<string | null>(null);
   const [ai, setAi] = useState<AiProgress | null>(null);
   const aiBusy = useRef(false);
   const [popups, setPopups] = useState<AlertItem[]>([]);
@@ -101,7 +104,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const pollAlerts = useCallback(async () => {
     try {
-      const r = await api.get<{ due: AlertItem[]; active: number; unread: number; ai: AiProgress }>("/api/alerts/due");
+      if (alertsSince.current === null) {
+        try {
+          const saved = localStorage.getItem("mts.alertsSince");
+          alertsSince.current = saved && !Number.isNaN(Date.parse(saved)) ? saved : "";
+        } catch { alertsSince.current = ""; }
+      }
+      const q = alertsSince.current ? `?since=${encodeURIComponent(alertsSince.current)}` : "";
+      const r = await api.get<{ due: AlertItem[]; active: number; unread: number; now: string; ai: AiProgress }>(
+        `/api/alerts/due${q}`);
+      if (typeof r.now === "string" && r.now) {
+        alertsSince.current = r.now;
+        try { localStorage.setItem("mts.alertsSince", r.now); } catch { /* без сохранения */ }
+      }
       setActiveAlerts(r.active);
       setUnreadAlerts(Math.max(0, r.unread - pendingRead.current));
       setAi(r.ai);

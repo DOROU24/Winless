@@ -8,7 +8,7 @@ import { Icon } from "./Icon";
 import { Modal } from "./Modal";
 import { FieldPicker, RuleBuilder, isGroup, simplify, toGroup } from "./RuleBuilder";
 
-const COLORS = ["#ff0032", "#f57c00", "#0070e5", "#7b4fe0", "#12a150", "#d6336c", "#626c77"];
+const COLORS = ["#ff0032", "#3d14ff", "#ff8a1f", "#2b2d33", "#f57c00", "#0070e5", "#7b4fe0", "#12a150", "#d6336c", "#626c77"];
 const DEFAULT_FIELDS = ["id", "productName", "submitDate", "assignedGroupName", "assignedEmployee", "state", "deadline"];
 const LEVEL_RANK: Record<Level, number> = { info: 0, elevated: 1, critical: 2 };
 const ALERT_RANK: Record<AlertMode, number> = { off: 0, popup: 1, sound: 2 };
