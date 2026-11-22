@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-// Вход в пульт: логин и пароль выдаются заранее, регистрации нет.
+// Вход в КООРАДАР: логин и пароль выдаются заранее, регистрации нет.
 export default function LoginPage() {
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
@@ -42,10 +42,10 @@ export default function LoginPage() {
       <form className="login__card" onSubmit={submit} noValidate>
         <div className="login__brand">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/brand/logo.svg" alt="МТС" width={44} height={44} />
+          <img src="/brand/logo.png" alt="КООРАДАР" width={44} height={44} />
           <span className="top__name">КООРАДАР</span>
         </div>
-        <h1>Вход в пульт</h1>
+        <h1>Вход</h1>
         <label className="field">
           <span>Логин</span>
           <input value={login} onChange={(e) => { setLogin(e.target.value); setError(null); }} autoComplete="username" autoFocus />
@@ -56,7 +56,7 @@ export default function LoginPage() {
         </label>
         {error && <p className="error-text" role="alert">{error}</p>}
         <button className="btn btn--primary login__submit" disabled={busy}>{busy ? "Вхожу…" : "Войти"}</button>
-        <p className="login__hint">Логин и пароль выдаёт администратор пульта</p>
+        <p className="login__hint">Логин и пароль выдаёт администратор</p>
       </form>
     </main>
   );

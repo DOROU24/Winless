@@ -6,7 +6,7 @@ import { AppShell } from "@/components/AppShell";
 export const metadata: Metadata = {
   title: "КООРАДАР",
   description: "Дашборд-конструктор координатора массовых инцидентов МТС",
-  icons: { icon: "/brand/favicon.svg" },
+  icons: { icon: [{ url: "/brand/favicon-32.png", sizes: "32x32" }, { url: "/brand/favicon-192.png", sizes: "192x192" }], apple: "/brand/apple-touch-icon.png" },
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#ffffff" };
