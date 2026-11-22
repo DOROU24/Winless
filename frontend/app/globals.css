@@ -1003,3 +1003,27 @@ input:focus, select:focus, textarea:focus, input:focus-visible, select:focus-vis
   .side__link { white-space: nowrap; flex: 0 0 auto; }
   .side__link span { white-space: nowrap; }
 }
+
+/* ==== Левая панель во всю высоту: логотип наверху панели, шапка начинается от её края ==== */
+.shell { grid-template-areas: "side top" "side page"; }
+.side { grid-area: side; padding-top: 0; overflow-y: auto; }
+.side__brand { display: flex; align-items: center; gap: 8px; height: 72px; flex: none; padding: 0 2px 0 6px; margin-bottom: 6px; }
+.side__brand .top__brand { gap: 12px; min-width: 0; flex: 1; }
+.side__brand .top__logo { width: 36px; height: 36px; flex: none; }
+.side__brand .top__name { font-size: 18px; white-space: nowrap; overflow: hidden; }
+.side__brand .top__side-toggle { margin-left: 0; }
+.top { padding: 0 24px; }
+@media (min-width: 901px) {
+  .shell--narrow .side__brand { flex-direction: column; justify-content: center; height: auto; padding: 18px 0 8px; gap: 10px; margin-bottom: 4px; }
+  .shell--narrow .side__brand .top__brand { flex: none; justify-content: center; }
+  .shell--narrow .side__brand .top__name { display: none; }
+}
+@media (max-width: 900px) {
+  .shell { grid-template-areas: "side" "top" "page"; }
+  .side__brand { height: 60px; }
+  .top { padding: 8px 16px; }
+}
+.side__brand { gap: 6px; padding: 0 0 0 8px; }
+.side__brand .top__brand { gap: 10px; }
+.side__brand .top__logo { width: 32px; height: 32px; }
+.side__brand .top__name { font-size: 16px; letter-spacing: 0; text-overflow: clip; }
