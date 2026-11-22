@@ -101,6 +101,7 @@ export function Card({ card, fields }: { card: CardData; fields: string[] }) {
   return (
     <div className="card-wrap">
     <article className={`card ${members.length ? "card--wave" : ""}`}>
+      <Fuse pct={card.deadlineLeftPct} overdue={card.overdue} />
       <button className="card__open" onClick={() => s.openIncident(card.id)} aria-label={`Открыть ${card.id}`}>
         <div className="card__top">
           <span className="mono card__id">{card.id}</span>

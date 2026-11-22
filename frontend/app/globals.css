@@ -1085,3 +1085,8 @@ input:focus, select:focus, textarea:focus, input:focus-visible, select:focus-vis
   .shell--narrow .top { padding-left: 8px; } /* центр значка кнопки = центр значков панели (26 px) */
 }
 .side, .side__section { overflow-x: hidden; }
+
+/* запал срока у карточки на доске — как на экране на стене: полоса слева, выгорает к дедлайну */
+.card { overflow: hidden; }
+.card > .fuse { flex: 0 0 6px; align-self: stretch; }
+.card__open { padding-left: 14px; }
