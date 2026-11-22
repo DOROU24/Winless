@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type Layout, type LayoutColumn, type WallLayout, type WallTile } from "@/lib/api";
 import { useStore } from "@/lib/store";
-import { fmtDuration } from "@/lib/format";
+import { fmtDuration, LEVEL_LABEL } from "@/lib/format";
 import { Fuse } from "@/components/ColumnView";
 import { Icon } from "@/components/Icon";
 
@@ -241,7 +241,10 @@ function Tile({ column: c, tile, editing, scale, onChange, openIncident }: {
     >
       <header className="wtile__head" onPointerDown={startDrag("move")}>
         {editing && <Icon name="grip" size={16} className="wtile__grip" />}
-        <h2>{c.name}</h2>
+        <div className="wtile__title">
+          <h2>{c.name}</h2>
+          <span className="wtile__level">{LEVEL_LABEL[c.level].toLowerCase()}</span>
+        </div>
         <strong className="wtile__count">{c.total}</strong>
       </header>
 
@@ -253,14 +256,14 @@ function Tile({ column: c, tile, editing, scale, onChange, openIncident }: {
               <Fuse pct={k.deadlineLeftPct} overdue={k.overdue} />
               <button className="wcard__open" onClick={() => !editing && openIncident(k.id)} disabled={editing}
                 aria-label={`Открыть ${k.id}`}>
-                <span className="mono">{k.id}</span>
-                {(k.wave || k.priorityUnderestimated || k.overdueRisk) && (
-                  <span className="wcard__tags">
-                    {k.wave && <span className="tag tag--wave">волна · {k.wave.size}</span>}
-                    {k.priorityUnderestimated && <span className="tag tag--warn">приоритет занижен?</span>}
-                    {k.overdueRisk && <span className="tag tag--warn">риск просрочки</span>}
-                  </span>
-                )}
+                <span className="wcard__top">
+                  <span className="wcard__id">{k.id}</span>
+                  {k.priorityId !== null && <span className={`prio prio--${k.priorityId}`}>{k.priority}</span>}
+                  {k.isNew && <span className="tag tag--new">новый</span>}
+                  {k.wave && <span className="tag tag--wave">волна · {k.wave.size}</span>}
+                  {k.priorityUnderestimated && <span className="tag tag--warn">приоритет занижен?</span>}
+                  {k.overdueRisk && <span className="tag tag--warn">риск просрочки</span>}
+                </span>
                 <p>{k.header}</p>
                 {k.deadlineLeftMin !== null && (
                   <em className={k.overdue ? "is-over" : ""}>
