@@ -3,7 +3,7 @@
 services:
   backend:
     build: ./backend
-    ports: ["8000:8000"]
+    ports: ["127.0.0.1:8000:8000"]
     environment:
       - MTS_DB_PATH=/data/data.sqlite3
       # Этап 2 (ИИ): без ключа сигналы ИИ помечены «недоступно», остальное работает
@@ -24,7 +24,7 @@ services:
       context: ./frontend
       args:
         BACKEND_URL: http://backend:8000
-    ports: ["3000:3000"]
+    ports: ["127.0.0.1:3000:3000"]
     depends_on:
       backend:
         condition: service_healthy
